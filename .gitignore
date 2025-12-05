@@ -1,5 +1,5 @@
 .env
 .vscode/
-data/
-db/
+# data/
+# db/
 src/__pycache__/
