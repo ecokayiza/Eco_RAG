@@ -1,12 +1,11 @@
 import os
 from config import Config
 from abc import ABC, abstractmethod
-# from langchain_community.document_loaders import TextLoader
-# from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 ###########################################
 # Get Raw Data And Extract
 ###########################################
+
 class DataLoader(ABC):
     """
     Abstract Base Class for all data loaders.
@@ -52,3 +51,13 @@ class DataLoaderFactory:
             if file_extension in loader.get_supported_extensions():
                 return loader
         raise ValueError(f"No loader found for extension: {file_extension}")
+
+if __name__ == "__main__":
+
+    try:
+        file_path = Config.TEST_FILE_PATH
+        _, ext = os.path.splitext(file_path)
+        data = DataLoaderFactory.get_loader(ext).load_data(file_path)
+        print(f"Loaded data from {file_path}:\n{data[:100]}...")  # Print first 100 characters
+    except ValueError as e:
+        print(e)
