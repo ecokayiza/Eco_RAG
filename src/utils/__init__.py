@@ -1,5 +1,6 @@
-from assembler import Assembler
+from .assembler import Assembler
+
 
 __all__ = [
-    "Assembler"
+    "Assembler",
 ]

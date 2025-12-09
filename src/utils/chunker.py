@@ -1,4 +1,3 @@
-import os
 from config import Config
 from abc import ABC, abstractmethod
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -36,8 +35,16 @@ class MarkdownChunker(Chunker):
         return chunks
     
 class ChunkerFactory:
+    
     @staticmethod
-    def get_chunker(file_extension):
+    def chunk(data, file_extension):
+        chunker = ChunkerFactory._get_chunker(file_extension)
+        chunks = chunker.chunk(data)
+        print(f"Total |{len(chunks)} chunks| created using {chunker.__name__}")
+        return chunks
+    
+    @staticmethod
+    def _get_chunker(file_extension):
         if file_extension in [".txt"]:
             return TextChunker
         elif file_extension in [".md"]:
@@ -49,20 +56,13 @@ class ChunkerFactory:
 
 if __name__ == "__main__":
     
+    import os
     from loader import DataLoaderFactory
-    def chunk(file):
-        _, ext = os.path.splitext(file)
-        data = DataLoaderFactory.get_loader(ext).load_data(file)
-        chunks = ChunkerFactory.get_chunker(ext).chunk(data)
-        return chunks
-
     file_path = Config.TEST_FILE_PATH
     try:
-        chunks = chunk(file_path)
-        print(f"File: {file_path} | Chunks: {len(chunks)}")
-        for i, chunk in enumerate(chunks[:2]):  # Print first 2 chunks as sample
-            print(f"--- Chunk {i+1} ---\n{chunk}\n")
-        
+        data = DataLoaderFactory.load(file_path)
+        _, ext = os.path.splitext(file_path)
+        chunks = ChunkerFactory.chunk(data, ext)        
     except ValueError as e:
         print(e)
 

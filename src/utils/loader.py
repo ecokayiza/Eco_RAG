@@ -1,7 +1,6 @@
 import os
 from config import Config
 from abc import ABC, abstractmethod
-
 ###########################################
 # Get Raw Data And Extract
 ###########################################
@@ -44,9 +43,18 @@ class DataLoaderFactory:
     Factory class to create appropriate DataLoader instances based on file extension.
     """
     loaders = [MarkDownDataLoader(), PDFDataLoader()]
+    DATA_DIR = Config.DATA_DIR
     
     @staticmethod
-    def get_loader(file_extension):
+    def load(file_path):
+        _, ext = os.path.splitext(file_path)
+        loader = DataLoaderFactory._get_loader(ext)
+        data = loader.load_data(file_path)
+        print(f"|{Config.get_relative_path(file_path)}| Data loaded using {loader.__class__.__name__}")
+        return data
+    
+    @staticmethod
+    def _get_loader(file_extension):
         for loader in DataLoaderFactory.loaders:
             if file_extension in loader.get_supported_extensions():
                 return loader
@@ -56,8 +64,7 @@ if __name__ == "__main__":
 
     try:
         file_path = Config.TEST_FILE_PATH
-        _, ext = os.path.splitext(file_path)
-        data = DataLoaderFactory.get_loader(ext).load_data(file_path)
-        print(f"Loaded data from {file_path}:\n{data[:100]}...")  # Print first 100 characters
+        data = DataLoaderFactory.load(file_path)
+        
     except ValueError as e:
         print(e)

@@ -20,6 +20,16 @@ class Config:
     CHUNK_OVERLAP = 200
     EMBEDDING_MODEL = "BAAI/bge-m3"
     
+    @staticmethod
+    def get_relative_path(file_path, data_dir=DATA_DIR):
+        # we use relative path
+        # data/subdir/file.txt -> subdir/file.txt
+        try:
+            rel_path = Path(file_path).relative_to(data_dir)
+            rel_path = str(rel_path).replace("\\", "/")
+        except ValueError:
+            rel_path = Path(file_path).name
+        return rel_path
     
 if __name__ == "__main__":
     print("ROOT_DIR:" + Config.ROOT_DIR)

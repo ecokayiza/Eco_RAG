@@ -1,0 +1,25 @@
+{
+    'ids': [
+        ['id1', 'id2', 'id3', 'id4', 'id5']  # IDs of the top 5 matching chunks
+    ],
+    'distances': [
+        [0.31, 0.34, 0.35, 0.38, 0.39]       # Similarity scores (lower is better for cosine distance)
+    ],
+    'metadatas': [
+        [
+            {'source': 'file.md', 'chunk_index': 30},
+            {'source': 'file.md', 'chunk_index': 9},
+            ...
+        ]
+    ],
+    'documents': [
+        [
+            "Content of chunk 30...",
+            "Content of chunk 9...",
+            ...
+        ]
+    ],
+    'embeddings': None,  # usually None unless you ask to include them
+    'uris': None,
+    'data': None
+}
