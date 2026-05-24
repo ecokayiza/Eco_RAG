@@ -48,10 +48,11 @@ python tests/eval/results_extractor.py \
 
 
 ## Test
-- Use HotpotQA as the test dataset.
-- Use token-level F1 score as the metric.
+- Use HotpotQA dev, and we extracted 1000 samples for test
+- Our dataset and finetuned model respect the reply with "evidence" and extra "explanation", so the answer doesnt really fit the F1 score
+- For the metrics, we first use another LLM to **refine** the answer given the question to align with `F1 score` so we can compare with other methods, then we apply "LLM-As-a-Judge" to judge correctness of every sample and get `Accuracy score`.
 
-eval script launch example:
+eval generation cmd:
 ```bash
 python tests/eval/eval.py \
   --hotpotqa-path tests/data/hotpotqa/test-1000.jsonl \
@@ -65,7 +66,7 @@ then extract the result and check scores:
 python tests/eval/results_extractor.py \
   --mode eval \
   --results-path tests/eval/results_test.jsonl \
-  --output-path tests/eval/hotpotqa_test.jsonl \
+  --output-path tests/eval/hotpotqa_test_results.jsonl \
   --concurrency 20
 ```
 
