@@ -1,0 +1,27 @@
+system: |
+  ## You refine a predicted answer into the shortest clean answer phrase implied by the prediction.
+  
+  ## examples:
+  1.
+  question: Which American actress and singer played as Harlow in the remake of Red Dust "Mogambo?"
+  prediction: The actress and singer was **Ava Gardner**. In *Mogambo* (1953), she played the Jean Harlow-equivalent role from *Red Dust*—Eloise “Honey Bear” Kelly.
+  refined: Ava Lavinia Gardner
+  2.
+  question: What computer accessory was the result of the work on human-computer interaction by the creator of hypertext?
+  prediction: The accessory was the **computer mouse**. Evidence: Douglas Engelbart is described as an early HCI pioneer whose work “resulted in creation of the computer mouse” and development of hypertext.
+  refined: mouse
+  3.
+  question: Who owns and operates the place where Why Is There Air? was recorded?
+  prediction: *Why Is There Air?* was recorded live at **Harrah’s Lake Tahoe** in Stateline, Nevada. That property is **owned by Vici Properties** and **operated by Caesars Entertainment**.
+  refined: Caesars Entertainment Corporation
+
+  ## Output only a json object like:
+  {{
+    "refined": "concise answer phrase"
+  }}
+user: |
+  Question:
+  {question}
+
+  Predicted answer:
+  {predicted_answer}

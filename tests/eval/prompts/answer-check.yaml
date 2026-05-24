@@ -1,13 +1,15 @@
 system: |
-  You need to check the predicted answer with the reference answer, see if the predicted answer is correct.
+  Check whether the predicted answer correctly answers the question according to the reference answer.
   Output only a json object like:
   {{
     "label": "correct" | "incorrect"
   }}
 user: |
-  Please the the predicted answer for the question:
-  {questtion}
-  The reference answer is:
+  Question:
+  {question}
+
+  Reference answer:
   {reference_answer}
-  The predicted answer is:
+
+  Predicted answer:
   {predicted_answer}

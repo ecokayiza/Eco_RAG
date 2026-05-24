@@ -20,8 +20,10 @@ if str(REPO_ROOT) not in sys.path:
 from echo.workflow_sections import parse_workflow_sections, render_workflow_section
 
 DEFAULT_RESULTS_PATH = Path(__file__).with_name("results.jsonl")
+DEFAULT_OUTPUT_PATH = Path(__file__).with_name("hotpotqa_train.jsonl")
+DEFAULT_EVAL_OUTPUT_PATH = Path(__file__).with_name("hotpotqa_eval.jsonl")
 DEFAULT_PROMPT_PATH = Path(__file__).with_name("prompts") / "answer-check.yaml"
-DEFAULT_EVAL_PROMPT_PATH = Path(__file__).with_name("prompts") / "answer-eval.yaml"
+DEFAULT_EVAL_PROMPT_PATH = Path(__file__).with_name("prompts") / "answer-refine.yaml"
 DEFAULT_SESSION_DIR = Path(__file__).resolve().parents[2] / "memory" / "chat_sessions"
 
 DEFAULT_TOOLS: list[dict[str, Any]] = [
@@ -178,6 +180,18 @@ def render_check_prompt(template: dict[str, str], question: str, reference_answe
     ]
 
 
+def render_refine_prompt(template: dict[str, str], question: str, predicted_answer: str) -> list[dict[str, str]]:
+    values = {
+        "questtion": question,
+        "question": question,
+        "predicted_answer": predicted_answer,
+    }
+    return [
+        {"role": "system", "content": template["system"].format(**values)},
+        {"role": "user", "content": template["user"].format(**values)},
+    ]
+
+
 def parse_judge_label(text: str) -> str | None:
     text = text.strip()
     if not text:
@@ -222,6 +236,21 @@ async def judge_with_model(messages: list[dict[str, str]]) -> bool | None:
     return label == "correct"
 
 
+async def refine_with_model(messages: list[dict[str, str]]) -> str | None:
+    try:
+        from echo.chat.registry import build_chat_model
+
+        model = build_chat_model()
+        response = await model.generate_response(messages=messages)
+    except Exception:
+        return None
+
+    content = (response.content or "").strip()
+    if not content:
+        return None
+    return parse_refined_prediction(content)
+
+
 async def judge_and_refine_with_model(messages: list[dict[str, str]]) -> dict[str, Any] | None:
     try:
         from echo.chat.registry import build_chat_model
@@ -235,6 +264,22 @@ async def judge_and_refine_with_model(messages: list[dict[str, str]]) -> dict[st
     if not content:
         return None
     return parse_eval_judgment(content)
+
+
+def parse_refined_prediction(text: str) -> str | None:
+    text = text.strip()
+    if not text:
+        return None
+
+    payload = parse_json_object(text)
+    if payload is not None:
+        for key in ("refined", "refined_answer", "answer", "prediction"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return clean_answer_text(value)
+        return None
+
+    return clean_answer_text(text)
 
 
 def parse_eval_judgment(text: str) -> dict[str, Any] | None:
@@ -597,10 +642,14 @@ async def extract_training_examples(
 async def extract_eval_results(
     results: list[dict[str, Any]],
     template: dict[str, str],
+    judge_template: dict[str, str] | None = None,
     output_handle: TextIO | None = None,
     progress: Any | None = None,
     concurrency: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if judge_template is None:
+        judge_template = load_yaml_template(DEFAULT_PROMPT_PATH)
+
     output: list[dict[str, Any] | None] = [None] * len(results)
     stats: dict[str, Any] = {"results": 0, "matched": 0, "correct": 0, "written": 0, "model_failed": 0}
     worker_count = max(1, concurrency)
@@ -637,22 +686,36 @@ async def extract_eval_results(
         )
         if can_evaluate:
             await update_stat("matched")
-            judge_messages = render_check_prompt(
+            refine_messages = render_refine_prompt(
                 template,
                 question,
-                reference_answer="; ".join(answers),
                 predicted_answer=prediction,
             )
-            judgment = await judge_and_refine_with_model(judge_messages)
-            if judgment is None:
+            refined = await refine_with_model(refine_messages)
+            model_failed = refined is None
+            refined = clean_answer_text(prediction if refined is None else refined)
+
+            judge_messages = render_check_prompt(
+                judge_template,
+                question,
+                reference_answer="; ".join(answers),
+                predicted_answer=refined,
+            )
+            is_correct = await judge_with_model(judge_messages)
+            if is_correct is None:
+                model_failed = True
+                is_correct = matches_answer(refined, answers)
+
+            if model_failed:
                 await update_stat("model_failed")
-                judgment = heuristic_eval_judgment(prediction, answers)
+            judgment = {"correct": is_correct, "refined": refined}
         else:
             judgment = {"correct": False, "refined": ""}
 
-        refined = clean_answer_text(str(judgment.get("refined") or ""))
-        if not refined and prediction:
-            refined = heuristic_eval_judgment(prediction, answers).get("refined") or prediction
+        refined_value = judgment.get("refined")
+        refined = clean_answer_text(str(refined_value or ""))
+        if refined_value is None and prediction:
+            refined = prediction
 
         correct = bool(judgment.get("correct"))
         f1 = best_token_f1(refined, answers)
@@ -702,10 +765,11 @@ async def extract_eval_results(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract HotpotQA eval artifacts from Echo workflow results.")
-    parser.add_argument("--mode", choices=("train", "eval"), default="train", help="train extracts correct sessions; eval writes answer scoring rows.")\
+    parser.add_argument("--mode", choices=("train", "eval"), default="train", help="train extracts correct sessions; eval writes answer scoring rows.")
     parser.add_argument("--sessions-dir", type=Path, default=DEFAULT_SESSION_DIR)
     parser.add_argument("--prompt-path", type=Path, default=None)
-    parser.add_argument("--results-path", type=Path)
+    parser.add_argument("--judge-prompt-path", type=Path, default=DEFAULT_PROMPT_PATH, help="Eval-mode prompt used after refinement to judge correctness.")
+    parser.add_argument("--results-path", type=Path, default=DEFAULT_RESULTS_PATH)
     parser.add_argument("--output-path", type=Path)
     parser.add_argument("--concurrency", type=int, default=1, help="Number of results to judge concurrently.")
     args = parser.parse_args(argv)
@@ -725,8 +789,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"Results file does not exist: {args.results_path}")
     if not args.prompt_path.exists():
         raise SystemExit(f"Prompt template does not exist: {args.prompt_path}")
+    if args.mode == "eval" and not args.judge_prompt_path.exists():
+        raise SystemExit(f"Judge prompt template does not exist: {args.judge_prompt_path}")
 
     template = load_yaml_template(args.prompt_path)
+    judge_template = load_yaml_template(args.judge_prompt_path) if args.mode == "eval" else None
     results = load_jsonl(args.results_path)
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -738,6 +805,7 @@ def main(argv: list[str] | None = None) -> int:
                     extract_eval_results(
                         results,
                         template,
+                        judge_template,
                         output_handle=handle,
                         progress=progress,
                         concurrency=args.concurrency,
