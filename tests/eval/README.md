@@ -1,34 +1,70 @@
 # Echo RAG Eval
 
+This directory contains the HotpotQA / FlashRAG evaluation workflow used to test Echo's RAG behavior against a fixed `wiki18_100w` corpus.
+
+The eval path intentionally uses a narrow tool surface:
+
+- `database_search` is the only runtime tool exposed by `tests/eval/eval.py`.
+- The workflow still uses Echo's current native tool-call protocol.
+- Parallel tool calls are allowed in exported training records, but this eval tool client only exposes one tool.
+
 ## Index
 
 Use `wiki18_100w` as the database with the `E5-base-v2` embedder.
 
 The retrieval corpus is large and must be downloaded manually. Download `wiki18_100w` from ModelScope:
+
 ```text
 https://www.modelscope.cn/datasets/hhjinjiajie/FlashRAG_Dataset/tree/master/retrieval_corpus
 ```
-we have prepared the download script, after it, put the corpus under `tests/data/retrieval_corpus`, including `wiki18_100w.jsonl` and `e5_flat_inner.index`
 
-the corpus has prebuilt FAISS index with e5-base-v2, we prepared local embedding model serivce, you can launch it with
+Place the corpus and prebuilt FAISS index under:
+
+```text
+tests/data/retrieval_corpus/
+```
+
+Required files:
+
+- `wiki18_100w.jsonl`
+- `e5_flat_inner.index`
+
+The corpus has a prebuilt FAISS index using `intfloat/e5-base-v2`. Echo expects embeddings from an OpenAI-compatible `/v1/embeddings` endpoint, so launch the local E5 service before evaluation:
+
 ```bash
 python -m mcp_server.local_e5_embedder --host 127.0.0.1 --port 8101 --model intfloat/e5-base-v2
 ```
 
-then **replace search skill  with `SKILL-eval.md`** to allow database_search only for evaluation.
+Then configure `models.json`:
 
-Before testing, you should ***set the active chat and embedding model*** in `models.json`. If the active embedding model points 
+- set the active chat model
+- set the active embedding model
+- point the embedding model `base_url` at `http://127.0.0.1:8101/v1`
+- use `intfloat/e5-base-v2` as the embedding model name
 
-## Train
-- - From HotpotQA train including 1000 records with easy medium hard:
-- - counts={'easy': 400, 'hard': 300, 'medium': 300};
-- - available={'easy': 17972,'medium': 56814, 'hard': 15661}
-- use chatgpt-5.5
-- replace system prompt with `system-train.yaml` , for `<echo_think>`, include validation deciding if the previous tool call is valid
-- not valid tool call will not be present inside sample
-- only sample with correct final answer will be in trainning dataset
+For eval-only prompting, replace the normal search skill with `tests/eval/prompts/SKILL-eval.md` so the model only receives `database_search` guidance.
 
-run generation cmd:
+## Train Data Generation
+
+Training data is generated from a HotpotQA train subset.
+
+Current subset shape:
+
+- total records: `1000`
+- sampled difficulty counts: `{"easy": 400, "medium": 300, "hard": 300}`
+- source availability snapshot: `{"easy": 17972, "medium": 56814, "hard": 15661}`
+
+Training run notes:
+
+- Use the current Echo workflow prompt format: `<echo_plan>`, `<echo_think>`, `<echo_answer>`.
+- Tool calls must be provider-native tool calls, not XML text.
+- `<echo_think>` may include `validation: valid | invalid`.
+- Invalid previous tool evidence is hidden from later in-turn memory.
+- Only samples with correct final answers should be exported for training.
+- Exported training examples set `parallel_tool_calls` to `true`.
+
+Run generation:
+
 ```bash
 python tests/eval/eval.py \
   --hotpotqa-path tests/data/hotpotqa/train-1000.jsonl \
@@ -37,7 +73,8 @@ python tests/eval/eval.py \
   --concurrency 8
 ```
 
-then extract the results to trainning ready dataset:
+Extract training-ready records:
+
 ```bash
 python tests/eval/results_extractor.py \
   --mode train \
@@ -46,13 +83,17 @@ python tests/eval/results_extractor.py \
   --concurrency 20
 ```
 
+## Test / Eval
 
-## Test
-- Use HotpotQA dev, and we extracted 1000 samples for test
-- Our dataset and finetuned model respect the reply with "evidence" and extra "explanation", so the answer doesnt really fit the F1 score
-- For the metrics, we first use another LLM to **refine** the answer given the question to align with `F1 score` so we can compare with other methods, then we apply "LLM-As-a-Judge" to judge correctness of every sample and get `Accuracy score`.
+The eval path uses a HotpotQA dev subset of 1000 samples.
 
-eval generation cmd:
+Echo answers may include evidence and explanatory text, so raw generated answers do not always align cleanly with token-level F1. The eval extractor therefore supports two scoring aids:
+
+- answer refinement before F1, to align the prediction with a short-answer metric
+- LLM-as-a-judge correctness labels for an accuracy-style score
+
+Run eval generation:
+
 ```bash
 python tests/eval/eval.py \
   --hotpotqa-path tests/data/hotpotqa/test-1000.jsonl \
@@ -61,7 +102,8 @@ python tests/eval/eval.py \
   --concurrency 8
 ```
 
-then extract the result and check scores:
+Extract eval rows and scores:
+
 ```bash
 python tests/eval/results_extractor.py \
   --mode eval \
@@ -71,16 +113,26 @@ python tests/eval/results_extractor.py \
 ```
 
 
-## Guidance
+## Baselines And Reporting
 
-Baselines:
+Reference notes from earlier runs:
 
-- auto-rag: llama3-8b at `44.9`
-- qwen3.5-9b with the system
+- auto-rag llama3-8b baseline: `44.9`
+- qwen3.5-9b baseline with the system prompt
 
-Ours:
+Echo fine-tuning targets:
 
-- finetuned llama3-8b with the system
-- finetuned qwen3.5-9b with the system
+- finetuned llama3-8b with the Echo workflow prompt
+- finetuned qwen3.5-9b with the Echo workflow prompt
 
-The system uses `database_search` only at eval.
+Report both:
+
+- refined-answer F1
+- LLM-judge accuracy
+
+Also report:
+- model/provider used
+- corpus/index versions
+- embedding endpoint/model
+- `settings.json`
+- active workflow prompt and skill files

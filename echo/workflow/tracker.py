@@ -66,8 +66,8 @@ class WorkflowTracker:
 
     def snapshot(self, state: WorkflowState) -> dict[str, Any]:
         """Build the minimal workflow snapshot returned to the app."""
-        pending = state.get("pending_retrieve") or {}
-        tool_name = str(pending.get("name") or "").strip() or None
+        tool_names = _pending_tool_names(state.get("pending_retrieve"))
+        tool_name = ", ".join(tool_names) if tool_names else None
         return {
             "workflow_turn_id": state["workflow_turn_id"],
             "query": state["query"],
@@ -88,3 +88,14 @@ class WorkflowTracker:
         item = self._get(node)
         item["status"] = status
         item["detail"] = detail
+
+
+def _pending_tool_names(pending_retrieve: Any) -> list[str]:
+    """Read pending tool names from old single-call drafts or current batches."""
+    if isinstance(pending_retrieve, dict):
+        pending_items = [pending_retrieve]
+    elif isinstance(pending_retrieve, list):
+        pending_items = [item for item in pending_retrieve if isinstance(item, dict)]
+    else:
+        pending_items = []
+    return [name for item in pending_items if (name := str(item.get("name") or "").strip())]

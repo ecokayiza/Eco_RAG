@@ -228,9 +228,12 @@ class WorkflowService:
         if step == WorkflowStep.PLAN:
             return _route_detail(state.get("next_step"))
         if step == WorkflowStep.RETRIEVE:
-            pending = state.get("pending_retrieve") or {}
-            tool_name = str(pending.get("name") or "").strip()
-            return f"Accepted '{tool_name}'." if tool_name else "Accepted the pending retrieve command."
+            tool_names = _pending_tool_names(state.get("pending_retrieve"))
+            if len(tool_names) == 1:
+                return f"Accepted '{tool_names[0]}'."
+            if tool_names:
+                return f"Accepted {len(tool_names)} tool calls: {', '.join(tool_names)}."
+            return "Accepted the pending retrieve command."
         if step == WorkflowStep.TOOL:
             return f"Completed round {state['retrieve_round']}."
         if step == WorkflowStep.THINK:
@@ -296,6 +299,17 @@ def _route_detail(next_step: Any) -> str:
     if step == WorkflowStep.ANSWER.value:
         return "Answer is ready."
     return "Decision completed."
+
+
+def _pending_tool_names(pending_retrieve: Any) -> list[str]:
+    """Read pending tool names from old single-call drafts or current batches."""
+    if isinstance(pending_retrieve, dict):
+        pending_items = [pending_retrieve]
+    elif isinstance(pending_retrieve, list):
+        pending_items = [item for item in pending_retrieve if isinstance(item, dict)]
+    else:
+        pending_items = []
+    return [name for item in pending_items if (name := str(item.get("name") or "").strip())]
 
 
 def _latest_error_thought(

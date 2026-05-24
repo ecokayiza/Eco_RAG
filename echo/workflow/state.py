@@ -51,7 +51,7 @@ class WorkflowState(TypedDict, total=False):
     requested_skill: str | None
     next_step: str | None
     retrieve_round: int
-    pending_retrieve: WorkflowRetrieveCall | None
+    pending_retrieve: list[WorkflowRetrieveCall] | None
     prepared_answer: str
     streamed_answer: str
     workflow_memory: list[WorkflowMemoryMessage]

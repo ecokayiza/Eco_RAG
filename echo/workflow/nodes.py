@@ -51,7 +51,7 @@ async def plan_node(state: WorkflowState, deps: WorkflowDependencies) -> Workflo
         requested_skill=state.get("requested_skill"),
     )
     content = (response.content or "").strip()
-    pending_retrieve = _pending_retrieve_with_native_tool_call(state, decision.get("pending_retrieve"))
+    pending_retrieve = _pending_retrieve_with_native_tool_calls(state, decision.get("pending_retrieve"))
     return {
         **state,
         "next_step": decision["next_step"],
@@ -66,10 +66,10 @@ async def plan_node(state: WorkflowState, deps: WorkflowDependencies) -> Workflo
 
 
 async def retrieve_node(state: WorkflowState) -> WorkflowState:
-    """Validate the pending native tool call before tool execution."""
-    pending_retrieve = state.get("pending_retrieve")
-    if not isinstance(pending_retrieve, dict):
-        raise ValueError("Retrieve node requires a pending native tool call.")
+    """Validate the pending native tool calls before tool execution."""
+    pending_retrieve = _pending_retrieve_calls(state.get("pending_retrieve"))
+    if not pending_retrieve:
+        raise ValueError("Retrieve node requires at least one pending native tool call.")
     return {
         **state,
         "next_step": WorkflowStep.TOOL.value,
@@ -77,47 +77,42 @@ async def retrieve_node(state: WorkflowState) -> WorkflowState:
 
 
 async def tool_node(state: WorkflowState, deps: WorkflowDependencies) -> WorkflowState:
-    """Execute one pending MCP tool call and store the normalized result."""
-    pending_retrieve = state.get("pending_retrieve")
-    if not isinstance(pending_retrieve, dict):
-        raise ValueError("Tool node requires a pending native tool call.")
+    """Execute the pending MCP tool-call batch and store normalized results."""
+    pending_retrieve = _pending_retrieve_calls(state.get("pending_retrieve"))
+    if not pending_retrieve:
+        raise ValueError("Tool node requires at least one pending native tool call.")
 
-    tool_name = str(pending_retrieve.get("name") or "").strip()
-    tool_args = dict(pending_retrieve.get("args") or {})
-    result = await _run_tool(deps.tool_client, tool_name, tool_args)
-    result = _persist_tool_artifacts(tool_name, result, state["workflow_turn_id"], state["retrieve_round"] + 1)
-    tool_content = _format_tool_message(tool_name, tool_args, result)
-    tool_call_id = _optional_text(pending_retrieve.get("tool_call_id"))
+    round_number = state["retrieve_round"] + 1
+    executions = await asyncio.gather(
+        *[
+            _execute_pending_tool_call(
+                state,
+                deps,
+                pending_tool,
+                round_number=round_number,
+                call_index=index,
+                call_count=len(pending_retrieve),
+            )
+            for index, pending_tool in enumerate(pending_retrieve, start=1)
+        ]
+    )
 
-    record = {
-        "id": _record_id(state, WorkflowStep.TOOL.value, suffix=str(state["retrieve_round"] + 1)),
-        "role": "tool",
-        "content": tool_content,
-        "message_type": WorkflowStep.TOOL.value,
-        "workflow_turn_id": state["workflow_turn_id"],
-        "tool_name": tool_name,
-        "tool_call_id": tool_call_id,
-    }
-    attachments = _tool_attachments(result)
-    if attachments:
-        record["attachments"] = attachments
-    _emit_record(record)
+    tool_memory_items: list[dict[str, Any]] = []
+    visual_memory_items: list[dict[str, Any]] = []
+    for execution in executions:
+        _emit_record(execution["record"])
+        tool_memory_items.append(execution["memory"])
+        visual_memory_items.extend(execution["visual_memory"])
 
-    next_round = state["retrieve_round"] + 1
-    tool_memory = {
-        "role": "tool",
-        "content": tool_content,
-        "tool_call_id": tool_call_id,
-    }
     return {
         **state,
         "next_step": WorkflowStep.THINK.value,
-        "retrieve_round": next_round,
+        "retrieve_round": round_number,
         "pending_retrieve": None,
         "workflow_memory": _append_memory(
             state["workflow_memory"],
-            tool_memory,
-            *_visual_memory_items(tool_name, result),
+            *tool_memory_items,
+            *visual_memory_items,
         ),
     }
 
@@ -139,7 +134,7 @@ async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> Workfl
         allowed_tool_names=deps.tool_client.tool_names,
     )
     content = (response.content or "").strip()
-    pending_retrieve = _pending_retrieve_with_native_tool_call(state, decision.get("pending_retrieve"))
+    pending_retrieve = _pending_retrieve_with_native_tool_calls(state, decision.get("pending_retrieve"))
     next_memory = _append_memory(
         state["workflow_memory"],
         _assistant_memory_item(content, pending_retrieve),
@@ -275,10 +270,14 @@ def _visual_memory_items(tool_name: str, result: dict[str, Any]) -> list[dict[st
         image_url = str(item.get("image_url") or "").strip()
         if not image_url:
             continue
+        title = _optional_text(item.get("title")) or "web_fetch screenshot"
+        source_url = _optional_text(item.get("url"))
+        caption = title if not source_url else f"{title}\nURL: {source_url}"
         messages.append(
             {
                 "role": "user",
                 "content": [
+                    {"type": "text", "text": caption},
                     {"type": "image_url", "image_url": {"url": image_url}},
                 ],
             }
@@ -290,7 +289,9 @@ def _persist_tool_artifacts(
     tool_name: str,
     result: dict[str, Any],
     workflow_turn_id: str,
+    *,
     round_number: int,
+    item_offset: int = 1,
 ) -> dict[str, Any]:
     """Persist transient tool images as chat artifacts for later UI display."""
     if tool_name != "web_fetch" or not isinstance(result, dict):
@@ -310,7 +311,7 @@ def _persist_tool_artifacts(
             str(next_item.get("image_url") or ""),
             workflow_turn_id=workflow_turn_id,
             round_number=round_number,
-            item_number=index,
+            item_number=item_offset + index - 1,
             title=_optional_text(next_item.get("title")),
             source_url=_optional_text(next_item.get("url")),
         )
@@ -416,7 +417,7 @@ def _decision_from_response(
                 raise ValueError("The load_skill tool is not configured.")
             return {
                 "next_step": WorkflowStep.RETRIEVE.value,
-                "pending_retrieve": {"name": "load_skill", "args": {"skill_name": requested_skill}},
+                "pending_retrieve": [{"name": "load_skill", "args": {"skill_name": requested_skill}}],
             }
 
         if response.tool_calls:
@@ -426,7 +427,7 @@ def _decision_from_response(
                 raise ValueError(f"{node.title()} node cannot request more retrieval.")
             return {
                 "next_step": WorkflowStep.RETRIEVE.value,
-                "pending_retrieve": _pending_retrieve_from_native_tool_call(response.tool_calls, allowed_tool_names),
+                "pending_retrieve": _pending_retrieve_from_native_tool_calls(response.tool_calls, allowed_tool_names),
             }
 
         if _has_action_block(sections, "answer"):
@@ -435,32 +436,85 @@ def _decision_from_response(
                 "answer": _required_block(sections.get("answer"), "answer"),
             }
 
-        raise ValueError(f"{node.title()} node must include <echo_answer> or exactly one provider-native tool call.")
+        raise ValueError(f"{node.title()} node must include <echo_answer> or at least one provider-native tool call.")
     except ValueError as exc:
         raise ValueError(_with_llm_raw_output(str(exc), response.content)) from exc
 
 
-def _pending_retrieve_from_native_tool_call(
+def _pending_retrieve_from_native_tool_calls(
     tool_calls: list[dict[str, Any]],
     allowed_tool_names: set[str],
-) -> dict[str, Any]:
-    """Convert one provider-native tool call into an Echo pending tool call."""
+) -> list[dict[str, Any]]:
+    """Convert provider-native tool calls into Echo pending tool calls."""
     calls = [item for item in tool_calls if isinstance(item, dict) and str(item.get("name") or "").strip()]
-    if len(calls) != 1:
-        raise ValueError("Workflow decisions must include exactly one provider-native tool call.")
+    if not calls:
+        raise ValueError("Workflow decisions must include at least one provider-native tool call.")
 
-    tool_call = calls[0]
-    name = str(tool_call.get("name") or "").strip()
-    if name not in allowed_tool_names:
-        allowed = ", ".join(sorted(allowed_tool_names))
-        raise ValueError(f"Unknown tool '{name}'. Allowed tools: {allowed}.")
+    pending_calls: list[dict[str, Any]] = []
+    for tool_call in calls:
+        name = str(tool_call.get("name") or "").strip()
+        if name not in allowed_tool_names:
+            allowed = ", ".join(sorted(allowed_tool_names))
+            raise ValueError(f"Unknown tool '{name}'. Allowed tools: {allowed}.")
 
-    args = tool_call.get("args")
-    pending: dict[str, Any] = {"name": name, "args": dict(args) if isinstance(args, dict) else {}}
-    tool_call_id = _optional_text(tool_call.get("id"))
-    if tool_call_id:
-        pending["tool_call_id"] = tool_call_id
-    return pending
+        args = tool_call.get("args")
+        pending: dict[str, Any] = {"name": name, "args": dict(args) if isinstance(args, dict) else {}}
+        tool_call_id = _optional_text(tool_call.get("id")) or _optional_text(tool_call.get("tool_call_id"))
+        if tool_call_id:
+            pending["tool_call_id"] = tool_call_id
+        pending_calls.append(pending)
+    return pending_calls
+
+
+async def _execute_pending_tool_call(
+    state: WorkflowState,
+    deps: WorkflowDependencies,
+    pending_tool: dict[str, Any],
+    *,
+    round_number: int,
+    call_index: int,
+    call_count: int,
+) -> dict[str, Any]:
+    """Run one pending tool call and build its stream record plus memory item."""
+    tool_name = str(pending_tool.get("name") or "").strip()
+    tool_args = dict(pending_tool.get("args") or {})
+    result = await _run_tool(deps.tool_client, tool_name, tool_args)
+    result = _persist_tool_artifacts(
+        tool_name,
+        result,
+        state["workflow_turn_id"],
+        round_number=round_number,
+        item_offset=call_index,
+    )
+    tool_content = _format_tool_message(tool_name, tool_args, result)
+    tool_call_id = _optional_text(pending_tool.get("tool_call_id"))
+
+    record = {
+        "id": _record_id(
+            state,
+            WorkflowStep.TOOL.value,
+            suffix=_tool_record_suffix(round_number=round_number, call_index=call_index, call_count=call_count),
+        ),
+        "role": "tool",
+        "content": tool_content,
+        "message_type": WorkflowStep.TOOL.value,
+        "workflow_turn_id": state["workflow_turn_id"],
+        "tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+    }
+    attachments = _tool_attachments(result)
+    if attachments:
+        record["attachments"] = attachments
+
+    return {
+        "record": record,
+        "memory": {
+            "role": "tool",
+            "content": tool_content,
+            "tool_call_id": tool_call_id,
+        },
+        "visual_memory": _visual_memory_items(tool_name, result),
+    }
 
 
 async def _run_tool(
@@ -787,7 +841,7 @@ def _decision_repair_messages(messages: list[dict[str, Any]], node: str) -> list
             "content": (
                 "__echo_workflow_repair__\n"
                 f"Your previous {label} decision had no executable next step. Continue the workflow now. "
-                "Output exactly one of these: a tool call, or an <echo_answer>...</echo_answer> block. "
+                "Output exactly one of these: one or more tool calls, or an <echo_answer>...</echo_answer> block. "
                 "Do not write prose-only intent such as 'I should search' or 'I should fetch'."
             ),
         },
@@ -877,7 +931,7 @@ def _empty_decision_message(node: str) -> str:
     if node == WorkflowStep.THINK.value:
         return (
             "Think node returned no action. Empty <echo_think> is allowed only when the response "
-            "also includes <echo_answer> or exactly one provider-native tool call."
+            "also includes <echo_answer> or at least one provider-native tool call."
         )
     return f"{node.title()} node returned an empty response."
 
@@ -888,29 +942,25 @@ def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dic
         return content
 
     sections = _sections(content, allow_unclosed=True)
-    first = next((item for item in tool_calls if isinstance(item, dict) and item.get("name")), None)
-    if not first:
+    names = [str(item.get("name") or "").strip() for item in tool_calls if isinstance(item, dict) and item.get("name")]
+    if not names:
         return content
 
     node_block = _optional_text(sections.get(node))
     if node_block:
         return render_workflow_section(node, node_block)
 
-    return render_workflow_section(node, f"Native tool call: {first['name']}")
+    label = "Native tool call" if len(names) == 1 else "Native tool calls"
+    return render_workflow_section(node, f"{label}: {', '.join(names)}")
 
 
 def _select_native_tool_calls(tool_calls: list[dict[str, Any]], allowed_tool_names: set[str]) -> list[dict[str, Any]]:
-    """Keep one executable native tool call for Echo's single-tool workflow step."""
-    named = [
+    """Keep complete named native tool calls and drop empty placeholders."""
+    return [
         dict(item)
         for item in tool_calls
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
-    if len(named) <= 1:
-        return named
-
-    allowed = [item for item in named if str(item.get("name") or "").strip() in allowed_tool_names]
-    return [allowed[0] if allowed else named[0]]
 
 
 def _record_message_type(node: str, content: str, tool_calls: list[dict[str, Any]]) -> str:
@@ -942,35 +992,60 @@ def _decision_record_id(state: WorkflowState, node: str) -> str:
     return _record_id(state, node)
 
 
-def _tool_call_id(state: WorkflowState, *, round_number: int) -> str:
+def _tool_record_suffix(*, round_number: int, call_index: int, call_count: int) -> str:
+    """Build stable tool record suffixes while preserving old single-call ids."""
+    if call_count <= 1:
+        return str(round_number)
+    return f"{round_number}.{call_index}"
+
+
+def _pending_retrieve_calls(pending_retrieve: Any) -> list[dict[str, Any]]:
+    """Normalize old single-call drafts and current call batches into a list."""
+    if isinstance(pending_retrieve, dict):
+        return [dict(pending_retrieve)]
+    if not isinstance(pending_retrieve, list):
+        return []
+    return [dict(item) for item in pending_retrieve if isinstance(item, dict)]
+
+
+def _tool_call_id(state: WorkflowState, *, round_number: int, call_index: int = 1) -> str:
     """Build one stable provider-native tool call id for a retrieval round."""
-    return f"{state['workflow_turn_id']}:tool_call:{round_number}"
+    suffix = str(round_number) if call_index == 1 else f"{round_number}.{call_index}"
+    return f"{state['workflow_turn_id']}:tool_call:{suffix}"
 
 
-def _pending_retrieve_with_native_tool_call(
+def _pending_retrieve_with_native_tool_calls(
     state: WorkflowState,
-    pending_retrieve: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """Attach a stable tool_call_id to one pending retrieval command."""
-    if not isinstance(pending_retrieve, dict):
+    pending_retrieve: Any,
+) -> list[dict[str, Any]] | None:
+    """Attach stable tool_call_ids to the pending retrieval batch."""
+    pending_calls = _pending_retrieve_calls(pending_retrieve)
+    if not pending_calls:
         return None
-    payload = {
-        "name": str(pending_retrieve.get("name") or "").strip(),
-        "args": dict(pending_retrieve.get("args") or {}),
-    }
-    if not payload["name"]:
-        return None
-    payload["tool_call_id"] = _optional_text(pending_retrieve.get("tool_call_id")) or _tool_call_id(
-        state,
-        round_number=state["retrieve_round"] + 1,
-    )
-    return payload
+    resolved: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, pending_tool in enumerate(pending_calls, start=1):
+        payload = {
+            "name": str(pending_tool.get("name") or "").strip(),
+            "args": dict(pending_tool.get("args") or {}),
+        }
+        if not payload["name"]:
+            continue
+        tool_call_id = _optional_text(pending_tool.get("tool_call_id")) or _optional_text(pending_tool.get("id"))
+        if not tool_call_id:
+            tool_call_id = _tool_call_id(state, round_number=state["retrieve_round"] + 1, call_index=index)
+        if tool_call_id in seen_ids:
+            tool_call_id = _tool_call_id(state, round_number=state["retrieve_round"] + 1, call_index=index)
+        payload["tool_call_id"] = tool_call_id
+        seen_ids.add(tool_call_id)
+        resolved.append(payload)
+    return resolved or None
 
 
-def _assistant_memory_item(content: str, pending_retrieve: dict[str, Any] | None) -> dict[str, Any]:
+def _assistant_memory_item(content: str, pending_retrieve: Any) -> dict[str, Any]:
     """Build one assistant transcript item with native tool_calls when retrieval is pending."""
     payload: dict[str, Any] = {"role": "assistant", "content": content}
-    provider_tool_calls = _provider_tool_calls([pending_retrieve] if isinstance(pending_retrieve, dict) else [])
+    provider_tool_calls = _provider_tool_calls(_pending_retrieve_calls(pending_retrieve))
     if provider_tool_calls:
         payload["tool_calls"] = provider_tool_calls
     return payload

@@ -43,7 +43,7 @@ DEFAULT_TOOLS: list[dict[str, Any]] = [
         },
     }
 ]
-DEFAULT_PARALLEL_TOOL_CALLS = False
+DEFAULT_PARALLEL_TOOL_CALLS = True
 
 _ARTICLE_RE = re.compile(r"\b(a|an|the)\b", re.IGNORECASE)
 _NON_WORD_RE = re.compile(r"[^0-9a-zA-Z]+")

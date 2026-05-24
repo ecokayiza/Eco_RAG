@@ -31,7 +31,7 @@ def hide_invalid_previous_tool_memory(
     workflow_memory: list[dict[str, Any]],
     think_content: str | None,
 ) -> list[dict[str, Any]]:
-    """Redact the previous tool result in in-turn memory when think marks it invalid."""
+    """Redact the previous tool-result batch in in-turn memory when think marks it invalid."""
     if think_validation(think_content) != "invalid":
         return workflow_memory
 
@@ -41,8 +41,14 @@ def hide_invalid_previous_tool_memory(
         return next_memory
 
     tool_index, end_index = previous
-    next_memory[tool_index]["content"] = _redacted_tool_content(next_memory[tool_index].get("content"))
-    del next_memory[tool_index + 1 : end_index]
+    redacted_slice = []
+    for item in next_memory[tool_index:end_index]:
+        if _is_visual_memory_item(item):
+            continue
+        if _role(item) == "tool":
+            item["content"] = _redacted_tool_content(item.get("content"))
+        redacted_slice.append(item)
+    next_memory[tool_index:end_index] = redacted_slice
     return next_memory
 
 
@@ -78,15 +84,18 @@ def _previous_tool_memory_slice(messages: list[dict[str, Any]]) -> tuple[int, in
         end_index -= 1
 
     index = end_index - 1
+    first_tool_index: int | None = None
     while index >= 0:
         item = messages[index]
         if _role(item) == "tool":
-            return index, end_index
+            first_tool_index = index
+            index -= 1
+            continue
         if _is_visual_memory_item(item):
             index -= 1
             continue
-        return None
-    return None
+        break
+    return (first_tool_index, end_index) if first_tool_index is not None else None
 
 
 def _redacted_tool_content(content: Any) -> str:
@@ -107,11 +116,12 @@ def _first_nonempty_line(value: str) -> str:
 
 def _is_visual_memory_item(item: dict[str, Any]) -> bool:
     content = item.get("content")
+    if _role(item) != "user" or not isinstance(content, list) or not content:
+        return False
+    allowed_types = {"text", "image_url"}
     return (
-        _role(item) == "user"
-        and isinstance(content, list)
-        and bool(content)
-        and all(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
+        any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
+        and all(isinstance(part, dict) and part.get("type") in allowed_types for part in content)
     )
 
 

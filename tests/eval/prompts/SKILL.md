@@ -19,6 +19,7 @@ Use this skill to choose tools for retrieval.
 - Use web search after database search when local results are empty, weak, stale, or clearly missing external context.
 - Use web fetch after web search when the answer needs page-body evidence from one promising URL.
 - Use both when the answer needs local project context plus external verification.
+- You may issue multiple independent retrieval tool calls in the same provider-native response when they can safely run in parallel.
 
 ## Query Discipline
 
