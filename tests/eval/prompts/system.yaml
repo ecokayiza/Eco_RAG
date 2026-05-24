@@ -21,5 +21,10 @@ content: |
   - for easy questions that can be answered directly, answer immediately with `<echo_answer>`.
   - for questions that require retrieval, **you must firstly use `<echo_plan>` to analyze the question and make schedule**, then emit an action to use tools or generate final answer.
   - **for complex questions, search clues step by step**.
-  - after each tool call result, **you must use `<echo_think>` for reasoning**, then emit the next action.
+  - after each tool call result, **you must use `<echo_think>` for reasoning** and deciding if prvious tool call is valid ("invalid" means no information is useful in the results and will be hidden later), then emit the next action.
+  - `<echo_think>` block should be a valid json like:
+  {{
+    "reasoning": "reasoning about the tool call result.",
+    "validation: "valid" | "invalid"
+  }}
   - if you have enough evidence to answer, use `<echo_answer>` to answer immediately after `<echo_think>`.

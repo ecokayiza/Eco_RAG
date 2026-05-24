@@ -28,18 +28,46 @@ Before testing, you should ***set the active chat and embedding model*** in `mod
 - not valid tool call will not be present inside sample
 - only sample with correct final answer will be in trainning dataset
 
+run generation cmd:
+```bash
+python tests/eval/eval.py \
+  --hotpotqa-path tests/data/hotpotqa/train-1000.jsonl \
+  --results-path tests/eval/results_train.jsonl \
+  --max-questions 0 \
+  --concurrency 8
+```
+
+then extract the results to trainning ready dataset:
+```bash
+python tests/eval/results_extractor.py \
+  --mode train \
+  --results-path tests/eval/results_train.jsonl \
+  --output-path tests/eval/hotpotqa_train.jsonl \
+  --concurrency 20
+```
+
+
 ## Test
 - Use HotpotQA as the test dataset.
 - Use token-level F1 score as the metric.
 
 eval script launch example:
 ```bash
-python tests/eval/flashrag_hotpotqa_eval.py \
-  --hotpotqa-path tests/data/hotpotqa/dev.jsonl \
-  --max-questions 1000 \
+python tests/eval/eval.py \
+  --hotpotqa-path tests/data/hotpotqa/test-1000.jsonl \
+  --results-path tests/eval/results_test.jsonl \
+  --max-questions 0 \
   --concurrency 8
 ```
-for trainning, use the `tests/data/hotpotqa/train-extrat.jsonl` dataset which includes 1000 questions
+
+then extract the result and check scores:
+```bash
+python tests/eval/results_extractor.py \
+  --mode eval \
+  --results-path tests/eval/results_test.jsonl \
+  --output-path tests/eval/hotpotqa_test.jsonl \
+  --concurrency 20
+```
 
 
 ## Guidance

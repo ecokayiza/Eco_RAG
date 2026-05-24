@@ -20,6 +20,7 @@ from ..workflow_sections import (
     render_workflow_sections,
     workflow_section_entries,
 )
+from .memory import hide_invalid_previous_tool_memory
 from .state import WorkflowState, WorkflowStep
 
 ANSWER_CHUNK_PATTERN = re.compile(r"\S+\s*|\s+")
@@ -137,16 +138,17 @@ async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> Workfl
     )
     content = (response.content or "").strip()
     pending_retrieve = _pending_retrieve_with_native_tool_call(state, decision.get("pending_retrieve"))
+    next_memory = _append_memory(
+        state["workflow_memory"],
+        _assistant_memory_item(content, pending_retrieve),
+    )
     return {
         **state,
         "next_step": decision["next_step"],
         "pending_retrieve": pending_retrieve,
         "prepared_answer": decision.get("answer", ""),
         "streamed_answer": streamed_answer if decision["next_step"] == WorkflowStep.ANSWER.value else "",
-        "workflow_memory": _append_memory(
-            state["workflow_memory"],
-            _assistant_memory_item(content, pending_retrieve),
-        ),
+        "workflow_memory": hide_invalid_previous_tool_memory(next_memory, content),
     }
 
 
