@@ -124,11 +124,13 @@ async def tool_node(state: WorkflowState, deps: WorkflowDependencies) -> Workflo
 
 async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> WorkflowState:
     """Reflect on the accumulated transcript and decide whether to retrieve or answer."""
-    allow_retrieve = bool(deps.tool_client.tool_names) and state["retrieve_round"] < deps.max_retrieve_rounds
+    limit_reached = bool(deps.tool_client.tool_names) and state["retrieve_round"] >= deps.max_retrieve_rounds
+    allow_retrieve = bool(deps.tool_client.tool_names) and not limit_reached
     response, streamed_answer = await _stream_decision_response(
         state,
         deps,
         node=WorkflowStep.THINK.value,
+        force_answer=limit_reached,
     )
     decision = _decision_from_response(
         response,
@@ -533,6 +535,7 @@ async def _stream_decision_response(
     deps: WorkflowDependencies,
     *,
     node: str,
+    force_answer: bool = False,
 ) -> tuple[Response, str]:
     """Stream one plan/think decision, emitting live record updates and answer chunks."""
     usage: dict[str, Any] = {}
@@ -553,9 +556,16 @@ async def _stream_decision_response(
             native_tool_calls.extend(dict(item) for item in payload if isinstance(item, dict))
 
     workflow_messages = _workflow_messages(state)
+    decision_tools = deps.tool_client.tool_schemas
+    if force_answer:
+        workflow_messages = _round_limit_answer_messages(
+            workflow_messages,
+            max_retrieve_rounds=deps.max_retrieve_rounds,
+        )
+        decision_tools = None
     async for chunk in deps.model.stream_response(
         workflow_messages,
-        tools=deps.tool_client.tool_schemas,
+        tools=decision_tools,
         callbacks={"on_usage": on_usage, "on_tool_calls": on_tool_calls},
     ):
         if not chunk:
@@ -582,7 +592,7 @@ async def _stream_decision_response(
     if not content.strip() and not native_tool_calls:
         response = await deps.model.generate_response(
             workflow_messages,
-            tools=deps.tool_client.tool_schemas,
+            tools=decision_tools,
         )
         content = (response.content or "").strip()
         native_tool_calls.clear()
@@ -592,13 +602,35 @@ async def _stream_decision_response(
             usage.update(response.token_usage)
 
     if _needs_decision_repair(node, content, native_tool_calls):
+        if force_answer:
+            response = await deps.model.generate_response(
+                _answer_repair_messages(workflow_messages),
+                tools=None,
+            )
+            content = _coerce_answer_content(response.content, state)
+            native_tool_calls.clear()
+            if response.token_usage:
+                usage.clear()
+                usage.update(response.token_usage)
+        else:
+            response = await deps.model.generate_response(
+                _decision_repair_messages(workflow_messages, node),
+                tools=decision_tools,
+            )
+            content = (response.content or "").strip()
+            native_tool_calls.clear()
+            native_tool_calls.extend(response.tool_calls or [])
+            if response.token_usage:
+                usage.clear()
+                usage.update(response.token_usage)
+
+    if force_answer and (native_tool_calls or TEXTUAL_RETRIEVE_PATTERN.search(content)):
         response = await deps.model.generate_response(
-            _decision_repair_messages(workflow_messages, node),
-            tools=deps.tool_client.tool_schemas,
+            _answer_repair_messages(workflow_messages),
+            tools=None,
         )
-        content = (response.content or "").strip()
+        content = _coerce_answer_content(response.content, state)
         native_tool_calls.clear()
-        native_tool_calls.extend(response.tool_calls or [])
         if response.token_usage:
             usage.clear()
             usage.update(response.token_usage)
@@ -757,6 +789,24 @@ def _decision_repair_messages(messages: list[dict[str, Any]], node: str) -> list
                 f"Your previous {label} decision had no executable next step. Continue the workflow now. "
                 "Output exactly one of these: a tool call, or an <echo_answer>...</echo_answer> block. "
                 "Do not write prose-only intent such as 'I should search' or 'I should fetch'."
+            ),
+        },
+    ]
+
+
+def _round_limit_answer_messages(messages: list[dict[str, Any]], *, max_retrieve_rounds: int) -> list[dict[str, Any]]:
+    """Append a hard instruction to answer when retrieval has reached its configured limit."""
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "__echo_workflow_round_limit__\n"
+                f"The workflow has reached the maximum retrieval limit of {max_retrieve_rounds} rounds. "
+                "Do not call tools or request more retrieval. "
+                "Use only the transcript and retrieved tool results above. "
+                "Produce the final response now, and it must contain exactly one <echo_answer>...</echo_answer> block. "
+                "If the available evidence is incomplete, state that uncertainty inside the answer block."
             ),
         },
     ]

@@ -20,4 +20,4 @@ tests/unit
 tests/data
 latex/
 /codex
-/tests/eval/flashrag_hotpotqa_results.jsonl
+/tests/eval/*.jsonl
