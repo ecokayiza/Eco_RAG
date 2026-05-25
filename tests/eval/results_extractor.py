@@ -47,9 +47,6 @@ DEFAULT_PARALLEL_TOOL_CALLS = True
 
 _ARTICLE_RE = re.compile(r"\b(a|an|the)\b", re.IGNORECASE)
 _NON_WORD_RE = re.compile(r"[^0-9a-zA-Z]+")
-_THINK_VALIDATION_RE = re.compile(
-    r"""(?i)(?:"|')?validation(?:"|')?\s*:\s*(?:"|')?(valid|invalid)\b"""
-)
 _HIDDEN_TOOL_RESULT = "[information hidden]"
 
 
@@ -438,7 +435,7 @@ def split_workflow_training_records(messages: list[dict[str, Any]]) -> list[dict
             examples.append(_training_record([*_context_messages(context), _target_message(payload)]))
 
         context.append(_copy_message(payload))
-        if payload.get("role") == "assistant" and _think_validation(payload.get("content")) == "invalid":
+        if payload.get("role") == "assistant" and _has_think_block(payload.get("content")):
             _redact_previous_tool_result(context, before=len(context) - 1)
 
     return examples
@@ -491,22 +488,9 @@ def _copy_message(message: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _think_validation(content: Any) -> str | None:
+def _has_think_block(content: Any) -> bool:
     block = parse_workflow_sections(str(content or ""), allow_unclosed=True).get("think")
-    if not block:
-        return None
-
-    try:
-        payload = json.loads(block.strip())
-    except json.JSONDecodeError:
-        payload = None
-    if isinstance(payload, dict):
-        validation = str(payload.get("validation") or "").strip().lower()
-        if validation in {"valid", "invalid"}:
-            return validation
-
-    match = _THINK_VALIDATION_RE.search(block)
-    return match.group(1).lower() if match else None
+    return bool(str(block or "").strip())
 
 
 def _redact_previous_tool_result(messages: list[dict[str, Any]], *, before: int) -> None:

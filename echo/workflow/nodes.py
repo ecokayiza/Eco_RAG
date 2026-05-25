@@ -20,7 +20,7 @@ from ..workflow_sections import (
     render_workflow_sections,
     workflow_section_entries,
 )
-from .memory import hide_invalid_previous_tool_memory
+from .memory import hide_previous_tool_results_from_context
 from .state import WorkflowState, WorkflowStep
 
 ANSWER_CHUNK_PATTERN = re.compile(r"\S+\s*|\s+")
@@ -145,7 +145,7 @@ async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> Workfl
         "pending_retrieve": pending_retrieve,
         "prepared_answer": decision.get("answer", ""),
         "streamed_answer": streamed_answer if decision["next_step"] == WorkflowStep.ANSWER.value else "",
-        "workflow_memory": hide_invalid_previous_tool_memory(next_memory, content),
+        "workflow_memory": hide_previous_tool_results_from_context(next_memory, content),
     }
 
 
@@ -949,6 +949,19 @@ def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dic
     node_block = _optional_text(sections.get(node))
     if node_block:
         return render_workflow_section(node, node_block)
+
+    if node == WorkflowStep.THINK.value:
+        return render_workflow_section(
+            node,
+            json.dumps(
+                {
+                    "reasoning": f"Need another retrieval step with: {', '.join(names)}.",
+                    "valid_information": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
 
     label = "Native tool call" if len(names) == 1 else "Native tool calls"
     return render_workflow_section(node, f"{label}: {', '.join(names)}")

@@ -1,38 +1,22 @@
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from ..workflow_sections import parse_workflow_sections, render_workflow_section
 
-THINK_VALIDATION_PATTERN = re.compile(
-    r"""(?i)(?:"|')?validation(?:"|')?\s*:\s*(?:"|')?(valid|invalid)\b"""
-)
 
-
-def think_validation(content: str | None) -> str | None:
-    """Return the validation value from an <echo_think> block when present."""
-    block = parse_workflow_sections(content, allow_unclosed=True).get("think")
-    if not block:
-        return None
-
-    payload = _json_object(block)
-    if isinstance(payload, dict):
-        validation = str(payload.get("validation") or "").strip().lower()
-        if validation in {"valid", "invalid"}:
-            return validation
-
-    match = THINK_VALIDATION_PATTERN.search(block)
-    return match.group(1).lower() if match else None
-
-
-def hide_invalid_previous_tool_memory(
+def hide_previous_tool_results_from_context(
     workflow_memory: list[dict[str, Any]],
     think_content: str | None,
 ) -> list[dict[str, Any]]:
-    """Redact the previous tool-result batch in in-turn memory when think marks it invalid."""
-    if think_validation(think_content) != "invalid":
+    """Hide the previous tool-result batch from future in-turn model context.
+
+    The immediately following think node can see full tool results and must distill
+    any reusable evidence into its <echo_think> valid_information field. After that
+    point, local storage can still keep the full tool record, but future model calls
+    only receive a redacted placeholder for that tool batch.
+    """
+    if not _has_think_or_answer_content(think_content):
         return workflow_memory
 
     next_memory = [dict(item) for item in workflow_memory]
@@ -52,30 +36,9 @@ def hide_invalid_previous_tool_memory(
     return next_memory
 
 
-def _json_object(value: str) -> dict[str, Any] | None:
-    text = _strip_code_fence(value)
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            return None
-        try:
-            parsed = json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _strip_code_fence(value: str) -> str:
-    text = value.strip()
-    if not text.startswith("```"):
-        return text
-    lines = text.splitlines()
-    if len(lines) >= 2 and lines[-1].strip() == "```":
-        return "\n".join(lines[1:-1]).strip()
-    return text
+def _has_think_or_answer_content(content: str | None) -> bool:
+    sections = parse_workflow_sections(content, allow_unclosed=True)
+    return bool(_optional_text(sections.get("think")) or _optional_text(sections.get("answer")))
 
 
 def _previous_tool_memory_slice(messages: list[dict[str, Any]]) -> tuple[int, int] | None:
@@ -102,7 +65,8 @@ def _redacted_tool_content(content: Any) -> str:
     tool_block = parse_workflow_sections(str(content or ""), allow_unclosed=True).get("tool")
     source = tool_block if tool_block is not None else str(content or "")
     heading = _first_nonempty_line(source)
-    hidden = f"{heading}\n\n[information hidden]" if heading else "[information hidden]"
+    marker = "[tool result hidden from model context]"
+    hidden = f"{heading}\n\n{marker}" if heading else marker
     return render_workflow_section("tool", hidden)
 
 

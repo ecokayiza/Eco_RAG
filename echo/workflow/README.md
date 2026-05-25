@@ -86,7 +86,8 @@ provider-native tool call batch:
 - 支持 `web_fetch(...)`
 - 支持 `workspace_*` 文件工具
 - 每个 provider tool call 都会得到一条匹配 `tool_call_id` 的 `role == "tool"` 记录
-- 每条 tool 记录都会追加进 flat workflow memory
+- 每条 tool 记录都会以完整结果写入本地记录和存储
+- 同一批 tool 结果会临时追加进 flat workflow memory，让下一跳 `think` 可以读取完整结果
 - 如果 `web_fetch` 返回 screenshot，workflow 会持久化 artifact，并把临时视觉 memory 加入当前回合
 - 下一跳 `think` 会直接读取本批次全部 tool 结果
 
@@ -95,13 +96,14 @@ provider-native tool call batch:
 ### `think`
 
 - 调用模型
-- 读取包含完整 tool 结果的 flat workflow memory
+- 读取包含上一批完整 tool 结果的 flat workflow memory
+- 必须在 `<echo_think>` JSON 中把可复用证据提取到 `valid_information`
 - 决定继续进入 `retrieve`，或进入 `answer`
 - 持久化一条 assistant 记录；如果同次决策包含 `<echo_answer>`，类型为 `answer`，否则为 `think`
 
 格式与 `plan` 对称，只是它能看到前面的 tool 结果。
 
-如果 `<echo_think>` 的 JSON reasoning 标记 `validation` 为 `invalid`，上一批 tool 结果会在后续 in-turn memory 中被隐藏，避免无效证据继续影响模型。
+`think` 完成后，上一批 tool 结果会只在 model context 中被隐藏，后续模型调用依赖 `<echo_think>` 中的 `valid_information`。本地持久化的 tool 记录仍保留完整结果，供 UI、调试和历史查看使用。
 
 ### `answer`
 
@@ -148,7 +150,9 @@ provider-native tool call batch:
 
 - `think` 会完整看到之前的 `plan`
 - 一批并行 tool calls 会作为多条连续 `tool` message 进入 transcript
-- 多跳检索时，下一次 `think` 会看到之前所有有效的 `tool` 结果和 `think`
+- 一批 tool calls 后面的第一条 `think` 能看到该批完整 tool 结果
+- `think` 之后，该批 tool 结果会在 model context 中替换为隐藏占位符，并移除临时视觉 memory
+- 多跳检索时，后续 `think` 通过之前 `<echo_think>` 的 `valid_information` 读取已提取证据，同时只看到最新未处理 tool 批次的完整结果
 
 ## State
 

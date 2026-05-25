@@ -58,8 +58,8 @@ Training run notes:
 
 - Use the current Echo workflow prompt format: `<echo_plan>`, `<echo_think>`, `<echo_answer>`.
 - Tool calls must be provider-native tool calls, not XML text.
-- `<echo_think>` may include `validation: valid | invalid`.
-- Invalid previous tool evidence is hidden from later in-turn memory.
+- `<echo_think>` should extract reusable evidence into `valid_information`.
+- Previous tool evidence is hidden from later model-facing memory after the following `<echo_think>`.
 - Only samples with correct final answers should be exported for training.
 - Exported training examples set `parallel_tool_calls` to `true`.
 
