@@ -29,4 +29,4 @@ content: |
     "reasoning": "based on your previous plan/think, reasoning about the tool call result and your query, and argue if there is any useful information.",
     "valid_information": ["concise, reusable facts found in the tool result, URL or the resources you need for next operation."],
   }}
-  - if you have enough evidence to answer, use `<echo_answer>` to answer immediately after `<echo_think>`.
+  - if you have enough evidence to answer, emit `<echo_think>` with `<echo_answer>` to answer immediately.

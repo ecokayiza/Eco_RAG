@@ -102,6 +102,14 @@ python tests/eval/eval.py \
   --concurrency 8
 ```
 
+```bash
+python tests/eval/eval.py \
+  --hotpotqa-path tests/data/hotpotqa/test-1000.jsonl \
+  --results-path tests/eval/results_test_original.jsonl \
+  --max-questions 0 \
+  --concurrency 8
+```
+
 Extract eval rows and scores:
 
 ```bash
