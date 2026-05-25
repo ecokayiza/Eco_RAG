@@ -25,6 +25,12 @@ from .state import WorkflowState, WorkflowStep
 
 ANSWER_CHUNK_PATTERN = re.compile(r"\S+\s*|\s+")
 TEXTUAL_RETRIEVE_PATTERN = re.compile(r"</?\s*(?:echo_)?retrieve\b", re.IGNORECASE)
+WORKFLOW_LIKE_TAG_PATTERN = re.compile(r"</?\s*(?:echo_)?(?:plan|think|answer|tool)\b", re.IGNORECASE)
+TOOL_INTENT_PATTERN = re.compile(
+    r"\b(?:i\s+(?:should|need|will|would|can)|need\s+to|must|let\s+me)\s+"
+    r"(?:search|retrieve|fetch|query|look\s+up|call|use)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -436,6 +442,12 @@ def _decision_from_response(
                 "answer": _required_block(sections.get("answer"), "answer"),
             }
 
+        if _is_plain_text_answer(content):
+            return {
+                "next_step": WorkflowStep.ANSWER.value,
+                "answer": content,
+            }
+
         raise ValueError(f"{node.title()} node must include <echo_answer> or at least one provider-native tool call.")
     except ValueError as exc:
         raise ValueError(_with_llm_raw_output(str(exc), response.content)) from exc
@@ -780,7 +792,12 @@ def _sanitize_decision_content(content: str) -> str:
         for name, block in workflow_section_entries(content, allow_unclosed=True)
         if name in {"plan", "think", "answer"} and block
     ]
-    return render_workflow_sections(entries) if entries else content.strip()
+    if entries:
+        return render_workflow_sections(entries)
+    text = content.strip()
+    if _is_plain_text_answer(text):
+        return render_workflow_section("answer", text)
+    return text
 
 
 def _required_block(value: Any, label: str) -> str:
@@ -826,9 +843,21 @@ def _needs_decision_repair(node: str, content: str, tool_calls: list[dict[str, A
 
     entries = workflow_section_entries(text, allow_unclosed=True)
     if not entries:
-        return True
+        return not _is_plain_text_answer(text)
 
     return all(name == node for name, _block in entries)
+
+
+def _is_plain_text_answer(text: str) -> bool:
+    """Return whether untagged model text is safe to treat as a final answer."""
+    stripped = text.strip()
+    return bool(
+        stripped
+        and not workflow_section_entries(stripped, allow_unclosed=True)
+        and not TEXTUAL_RETRIEVE_PATTERN.search(stripped)
+        and not WORKFLOW_LIKE_TAG_PATTERN.search(stripped)
+        and not TOOL_INTENT_PATTERN.search(stripped)
+    )
 
 
 def _decision_repair_messages(messages: list[dict[str, Any]], node: str) -> list[dict[str, Any]]:

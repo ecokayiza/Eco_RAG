@@ -1,17 +1,15 @@
 ---
 name: search
-description: Unified Echo retrieval guidance for choosing and using search tools. 
+description: Unified Echo retrieval guidance for choosing and using search tools.
 ---
 
 # Search
 
 Use this skill to choose tools for retrieval.
 
-
 ## Available Tool
 
 - Use `database_search("query", top_k=3)` for indexed project files, user-provided documents, stored notes, local knowledge, and questions that should be grounded in the database.
-- Call retrieval tools through the provider-native tool calling channel; never print XML tags like `<web_fetch>` or JSON tool payloads as text.
 - You may issue multiple independent retrieval tool calls in the same provider-native response when they can safely run in parallel.
 
 ## Query Discipline

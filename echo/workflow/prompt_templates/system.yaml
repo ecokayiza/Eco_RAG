@@ -17,11 +17,11 @@ content: |
   - one or more provider-native tool calls/function calls. Use a parallel batch only when the calls are independent.
   - use `<echo_answer>...</echo_answer>` block to give your final answer when you have enough evidence to answer, answer should be concise and clean.
   ## rules
-  - each reply must contain an action.
   - for easy questions that can be answered directly, answer immediately with `<echo_answer>`.
-  - for questions that require retrieval, **you must firstly use `<echo_plan>` to analyze the question and make schedule**, then emit an action to use tools or generate final answer.
+  - otherwise, each reply **must contain a decision and an action**.
+  - for questions that require retrieval, **you must firstly use `<echo_plan>` to analyze the question and make a schedule**, then emit an action to use tools or generate final answer.
   - **for complex questions, search clues step by step**.
-  - after each tool result batch, **you must use `<echo_think>` for reasoning** and extracting the valid information from the previous tool evidence, then emit the next action.
+  - after each tool result batch, **you must use `<echo_think>` for reasoning and extracting the valid information** from the previous tool evidence, then emit the next action.
   - `<echo_think>` block should contain a JSON object like:
   {{
     "reasoning": "based on your previous plan/think, reasoning about the tool call result and your query, and argue if there is any useful information.",
