@@ -319,6 +319,9 @@ class ChatService:
         if len(system_messages) != 1 or (session["messages"] and session["messages"][0].role != "system"):
             current = system_messages[0].content if system_messages else None
             messages.ensure_system_prompt(current)
+        elif ChatService._is_blank_new_session(session):
+            # Force update empty sessions to the latest system prompt
+            messages.ensure_system_prompt(None)
 
     @staticmethod
     def _is_blank_new_session(session: dict[str, Any]) -> bool:
