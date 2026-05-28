@@ -6,7 +6,6 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, urlparse, urlunparse
 from urllib.request import Request, urlopen
-from xml.etree import ElementTree
 
 from echo.settings import load_app_settings
 
@@ -14,14 +13,12 @@ SEARCH_BACKENDS = {
     "auto": (
         ("duckduckgo_html", "https://html.duckduckgo.com/html/?q={query}&kl=us-en", "duckduckgo"),
         ("duckduckgo_lite", "https://lite.duckduckgo.com/lite/?q={query}&kl=us-en", "duckduckgo"),
-        ("bing_rss", "https://www.bing.com/search?q={query}&format=rss&setlang=en-US", "bing"),
         ("baidu", "http://www.baidu.com/s?wd={query}&ie=utf-8", "baidu"),
     ),
     "duckduckgo": (
         ("duckduckgo_html", "https://html.duckduckgo.com/html/?q={query}&kl=us-en", "duckduckgo"),
         ("duckduckgo_lite", "https://lite.duckduckgo.com/lite/?q={query}&kl=us-en", "duckduckgo"),
     ),
-    "bing": (("bing_rss", "https://www.bing.com/search?q={query}&format=rss&setlang=en-US", "bing"),),
     "baidu": (("baidu", "http://www.baidu.com/s?wd={query}&ie=utf-8", "baidu"),),
 }
 REQUEST_HEADERS = {
@@ -278,8 +275,6 @@ def _fetch(url: str) -> str:
 def _parse_payload(payload: str, parser_name: str) -> list[dict[str, str | None]]:
     if parser_name == "duckduckgo":
         return _parse_duckduckgo_results(payload)
-    if parser_name == "bing":
-        return _parse_bing_rss(payload)
     if parser_name == "baidu":
         return _parse_baidu_results(payload)
     raise ValueError(f"Unknown search parser '{parser_name}'.")
@@ -300,25 +295,6 @@ def _parse_baidu_results(html: str) -> list[dict[str, str | None]]:
     parser.feed(html)
     parser.close()
     return _dedupe_items(parser.items)
-
-
-def _parse_bing_rss(xml_text: str) -> list[dict[str, str | None]]:
-    """Parse Bing RSS search results."""
-    root = ElementTree.fromstring(xml_text.strip())
-    items = []
-    for item in root.findall("./channel/item"):
-        title = _plain_text(item.findtext("title"))
-        content = _plain_text(item.findtext("description"))
-        url = _plain_text(item.findtext("link")) or None
-        if title:
-            items.append(
-                {
-                    "title": title,
-                    "content": content or title,
-                    "url": url,
-                }
-            )
-    return _dedupe_items(items)
 
 
 def _dedupe_items(items: list[dict[str, str | None]]) -> list[dict[str, str | None]]:
@@ -351,7 +327,7 @@ def _resolve_result_url(value: str | None) -> str | None:
 
 def _normalize_backend(value: str | None) -> str:
     cleaned = (value or "auto").strip().lower()
-    aliases = {"ddg": "duckduckgo", "duck": "duckduckgo", "bing_rss": "bing", "baidu_search": "baidu"}
+    aliases = {"ddg": "duckduckgo", "duck": "duckduckgo", "baidu_search": "baidu"}
     backend = aliases.get(cleaned, cleaned)
     return backend if backend in SEARCH_BACKENDS else "auto"
 

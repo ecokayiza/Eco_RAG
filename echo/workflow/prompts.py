@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -24,7 +23,6 @@ def default_system_prompt(
     ).strip()
 
 
-@lru_cache(maxsize=None)
 def _template(name: str) -> str:
     """Load one workflow prompt template from YAML."""
     path = PROMPT_DIR / f"{name}.yaml"

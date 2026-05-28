@@ -18,6 +18,8 @@ Use this skill to choose tools for retrieval.
 - **For complex questions, search clues step by step**.
 - Keep result counts small: prefer `top_k=3` to `5`.
 - Avoid repeating the same search without adding a sharper term, source name, date, or constraint.
+- **Iterative Query Rewriting:** If a search returns weak or unrelated evidence, do not just add more keywords. Change the search entity. For example, if searching for a "Film" fails, search for the "Director", the "Production Company", or the "Source Material" in the next turn.
+- **No Redundant Queries:** When issuing parallel tool calls, each query MUST target a distinctly different semantic angle, entity, or data source. Never issue parallel searches with nearly identical keywords just to force a match.
 - Stop retrieving once the evidence is enough to answer.
 
 ## Evidence Handling

@@ -117,9 +117,9 @@ def _web_search_backend(value: object) -> str:
     if not isinstance(value, str):
         return "auto"
     cleaned = value.strip().lower()
-    aliases = {"ddg": "duckduckgo", "duck": "duckduckgo", "baidu_search": "baidu", "bing_rss": "bing"}
+    aliases = {"ddg": "duckduckgo", "duck": "duckduckgo", "baidu_search": "baidu"}
     resolved = aliases.get(cleaned, cleaned)
-    return resolved if resolved in {"auto", "duckduckgo", "bing", "baidu"} else "auto"
+    return resolved if resolved in {"auto", "duckduckgo", "baidu"} else "auto"
 
 
 def _database_backend(value: object) -> str:

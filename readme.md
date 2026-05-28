@@ -273,7 +273,6 @@ Search backends:
 
 - `auto`
 - `duckduckgo`
-- `bing`
 - `baidu`
 
 Database backends:

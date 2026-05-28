@@ -116,7 +116,6 @@ export function RuntimeSettingsSection({ busy, settings, onUpdate }: RuntimeSett
               >
                 <option value="auto">Auto</option>
                 <option value="duckduckgo">DuckDuckGo</option>
-                <option value="bing">Bing</option>
                 <option value="baidu">Baidu</option>
               </select>
             </Field>

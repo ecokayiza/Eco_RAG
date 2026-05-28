@@ -389,9 +389,8 @@ export function useChatWorkspace() {
         dispatch({ type: "bootstrap", meta, health });
         settings.actions.applyPersistedSettings(modelSettings, skillSettings, appSettings);
 
-        const nextPrompt = storage.getSystemPrompt() ?? meta.default_system_prompt;
+        const nextPrompt = meta.default_system_prompt;
         setSystemPromptDraft(nextPrompt);
-        storage.setSystemPrompt(nextPrompt);
 
         const sessions = await api.listSessions();
         if (cancelled) {
@@ -479,7 +478,6 @@ export function useChatWorkspace() {
 
     const nextPrompt = getPromptFromMessages(payload.messages, getDefaultPrompt(state.meta));
     setSystemPromptDraft(nextPrompt);
-    storage.setSystemPrompt(nextPrompt);
   }
 
   async function withBusy(
@@ -636,7 +634,7 @@ export function useChatWorkspace() {
   }
 
   async function createSession(title?: string | null) {
-    const currentPrompt = systemPromptDraft || state.meta?.default_system_prompt || "";
+    const currentPrompt = state.meta?.default_system_prompt || "";
     const existingBlankSession = state.sessions.find(isBlankNewSession);
 
     if (existingBlankSession) {
@@ -691,7 +689,6 @@ export function useChatWorkspace() {
       async () => {
         const payload = await api.updateSystemPrompt(state.sessionId!, trimOrNull(systemPromptDraft));
         applySessionPayload(payload);
-        storage.setSystemPrompt(systemPromptDraft);
         dispatch({ type: "status", text: "System prompt updated.", tone: "success", liveLabel: "Ready" });
       },
       async (detail) => {

@@ -19,7 +19,7 @@ content: |
   ## rules
   - **output the `<echo_plan>`, `<echo_think>`, or `<echo_answer>` blocks in your final response, not in your thinking process**.
   - for easy questions that dont require retrieval, answer immediately with `<echo_answer>`.
-  - otherwise, each reply **must contain a decision and an action**, that is one **`<echo_plan>` or `<echo_think>`** plus one **tool calls batch or `<echo_answer>`**.
+  - otherwise, **each reply must contain a decision and an action**, that is: (`<echo_plan>` or `<echo_think>`) + (`tool calls batch` or `<echo_answer>`).
   - for questions that require retrieval, **you must firstly use `<echo_plan>` to analyze the question and make a schedule**, then emit an action to use tools or generate final answer.
   - **for complex questions, search clues step by step**.
   - after each tool result batch, **you must use `<echo_think>` for reasoning and extracting the valid information** from the previous tool evidence, then emit the next action.

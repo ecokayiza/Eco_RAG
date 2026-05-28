@@ -979,6 +979,10 @@ def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dic
     if node_block:
         return render_workflow_section(node, node_block)
 
+    fallback_text = _tool_call_decision_text(content, sections)
+    if fallback_text:
+        return render_workflow_section(node, fallback_text)
+
     if node == WorkflowStep.THINK.value:
         return render_workflow_section(
             node,
@@ -994,6 +998,14 @@ def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dic
 
     label = "Native tool call" if len(names) == 1 else "Native tool calls"
     return render_workflow_section(node, f"{label}: {', '.join(names)}")
+
+
+def _tool_call_decision_text(content: str, sections: dict[str, str]) -> str | None:
+    """Preserve non-action decision text before falling back to a synthetic tool-call note."""
+    if not content.strip() or _has_action_block(sections, "answer"):
+        return None
+    text = re.sub(r"</?\s*(?:echo_)?(?:plan|think|answer|tool)\s*>", "", content, flags=re.IGNORECASE).strip()
+    return _optional_text(text)
 
 
 def _select_native_tool_calls(tool_calls: list[dict[str, Any]], allowed_tool_names: set[str]) -> list[dict[str, Any]]:

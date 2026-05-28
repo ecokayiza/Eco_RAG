@@ -423,7 +423,7 @@ function normalizeAppSettings(settings: Partial<AppSettingsDocument> | null | un
 }
 
 function normalizeWebSearchBackend(value: unknown): AppSettingsDocument["web_search_backend"] {
-  return value === "duckduckgo" || value === "bing" || value === "baidu" || value === "auto" ? value : "auto";
+  return value === "duckduckgo" || value === "baidu" || value === "auto" ? value : "auto";
 }
 
 function normalizeDatabaseBackend(value: unknown): AppSettingsDocument["default_database_backend"] {

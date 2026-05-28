@@ -44,5 +44,5 @@ export function getPreferredSessionId(sessions: SessionSummary[]) {
 }
 
 export function getDefaultPrompt(meta: MetaResponse | null) {
-  return meta?.default_system_prompt ?? storage.getSystemPrompt() ?? "";
+  return meta?.default_system_prompt ?? "";
 }
