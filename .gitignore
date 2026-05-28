@@ -21,3 +21,4 @@ tests/data
 latex/
 /codex
 /tests/eval/*.jsonl
+/tests/eval/v*
