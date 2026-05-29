@@ -74,12 +74,20 @@ python tests/eval/eval.py \
 ```
 
 Extract training-ready records:
-
 ```bash
 python tests/eval/results_extractor.py \
   --mode train \
   --results-path tests/eval/results_train.jsonl \
   --output-path tests/eval/hotpotqa_train.jsonl \
+  --concurrency 20
+```
+
+also check trainning data quality through:
+```bash
+python tests/eval/results_extractor.py \
+  --mode eval \
+  --results-path tests/eval/results_train.jsonl \
+  --output-path tests/eval/hotpotqa_train_eval.jsonl \
   --concurrency 20
 ```
 

@@ -5,6 +5,7 @@ import json
 import asyncio
 from collections import Counter
 from copy import deepcopy
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -63,6 +64,8 @@ def load_yaml_template(path: Path) -> dict[str, str]:
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
@@ -74,6 +77,59 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             if isinstance(payload, dict):
                 rows.append(payload)
     return rows
+
+
+def result_resume_key(result: dict[str, Any]) -> str:
+    for field in ("id", "key"):
+        value = str(result.get(field) or "").strip()
+        if value:
+            return value
+
+    row = result.get("row")
+    if row is not None and str(row).strip():
+        return f"row:{row}"
+
+    session_id = str(result.get("session_id") or "").strip()
+    if session_id:
+        return f"session:{session_id}"
+
+    question = str(result.get("question") or "").strip()
+    if question:
+        return "question:" + hashlib.sha256(question.encode("utf-8")).hexdigest()
+
+    payload = json.dumps(result, sort_keys=True, ensure_ascii=False, default=str)
+    return "payload:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def existing_output_keys(path: Path) -> set[str]:
+    return {result_resume_key(row) for row in load_jsonl(path)}
+
+
+def training_record_question(record: dict[str, Any]) -> str:
+    messages = record.get("messages")
+    if not isinstance(messages, list):
+        return ""
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role") or "").strip() != "user":
+            continue
+        return clean_answer_text(str(message.get("content") or ""))
+    return ""
+
+
+def existing_training_question_counts(path: Path) -> Counter[str]:
+    questions: Counter[str] = Counter()
+    for row in load_jsonl(path):
+        question = training_record_question(row)
+        if question:
+            questions[question] += 1
+    return questions
+
+
+def pending_results(results: list[dict[str, Any]], completed_keys: set[str]) -> list[dict[str, Any]]:
+    return [result for result in results if result_resume_key(result) not in completed_keys]
 
 
 def load_session_index(session_dir: Path) -> dict[str, dict[str, Any]]:
@@ -441,6 +497,31 @@ def split_workflow_training_records(messages: list[dict[str, Any]]) -> list[dict
     return examples
 
 
+def completed_training_keys(
+    results: list[dict[str, Any]],
+    session_index: dict[str, dict[str, Any]],
+    existing_counts: Counter[str],
+) -> set[str]:
+    completed: set[str] = set()
+    if not existing_counts:
+        return completed
+
+    for result in results:
+        question = clean_answer_text(str(result.get("question") or ""))
+        if not question or existing_counts.get(question, 0) <= 0:
+            continue
+
+        session_id = str(result.get("session_id") or "").strip()
+        session_payload = session_index.get(session_id)
+        if not session_payload:
+            continue
+
+        expected = len(split_workflow_training_records(extract_messages(session_payload)))
+        if expected > 0 and existing_counts[question] >= expected:
+            completed.add(result_resume_key(result))
+    return completed
+
+
 def _training_record(messages: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "messages": messages,
@@ -524,6 +605,7 @@ async def extract_training_examples(
     session_index: dict[str, dict[str, Any]],
     template: dict[str, str],
     output_handle: TextIO | None = None,
+    existing_counts: Counter[str] | None = None,
     progress: Any | None = None,
     concurrency: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -545,24 +627,32 @@ async def extract_training_examples(
                 update_progress(progress, stats)
                 progress.update(1)
 
-    async def write_example(example: dict[str, Any]) -> None:
-        async with lock:
-            output.append(example)
-            if output_handle is not None:
-                output_handle.write(json.dumps(example, ensure_ascii=False) + "\n")
-                output_handle.flush()
-            stats["written"] += 1
-            update_progress(progress, stats)
+    existing_counts = Counter(existing_counts or {})
 
-    async def handle_result(result: dict[str, Any]) -> None:
+    async def write_examples(question: str, examples: list[dict[str, Any]]) -> int:
+        question_key = clean_answer_text(question)
+        async with lock:
+            already_written = existing_counts.get(question_key, 0)
+            remaining = examples[already_written:]
+            for example in remaining:
+                output.append(example)
+                if output_handle is not None:
+                    output_handle.write(json.dumps(example, ensure_ascii=False) + "\n")
+                    output_handle.flush()
+            existing_counts[question_key] = already_written + len(remaining)
+            stats["written"] += len(remaining)
+            update_progress(progress, stats)
+            return len(remaining)
+
+    async def handle_result(result: dict[str, Any]) -> tuple[str, int]:
         await update_stat("results")
         if str(result.get("status") or "").strip().lower() != "ok":
-            return
+            return "not_ok", 0
 
         session_id = str(result.get("session_id") or "").strip()
         if not session_id or session_id not in session_index:
             await update_stat("missing_session")
-            return
+            return "missing_session", 0
 
         question = str(result.get("question") or "").strip()
         answers = result.get("answers")
@@ -572,7 +662,7 @@ async def extract_training_examples(
 
         prediction = str(result.get("prediction") or result.get("answer") or "").strip()
         if not question or not answers or not prediction:
-            return
+            return "incomplete", 0
 
         await update_stat("matched")
         session_payload = session_index[session_id]
@@ -587,15 +677,16 @@ async def extract_training_examples(
             is_correct = matches_answer(prediction, answers)
 
         if not is_correct:
-            return
+            return "incorrect", 0
 
         await update_stat("correct")
         messages = extract_messages(session_payload)
         if not messages:
-            return
+            return "no_messages", 0
 
-        for example in split_workflow_training_records(messages):
-            await write_example(example)
+        examples = split_workflow_training_records(messages)
+        written = await write_examples(question, examples)
+        return "written" if written else "no_examples", written
 
     async def producer() -> None:
         for result in results:
@@ -634,7 +725,7 @@ async def extract_eval_results(
     if judge_template is None:
         judge_template = load_yaml_template(DEFAULT_PROMPT_PATH)
 
-    output: list[dict[str, Any] | None] = [None] * len(results)
+    output: list[dict[str, Any]] = []
     stats: dict[str, Any] = {"results": 0, "matched": 0, "correct": 0, "written": 0, "model_failed": 0}
     worker_count = max(1, concurrency)
     queue: asyncio.Queue[tuple[int, dict[str, Any]] | None] = asyncio.Queue(maxsize=worker_count)
@@ -651,6 +742,15 @@ async def extract_eval_results(
             if progress is not None:
                 update_progress(progress, stats)
                 progress.update(1)
+
+    async def write_record(result: dict[str, Any], record: dict[str, Any]) -> None:
+        async with lock:
+            output.append(record)
+            if output_handle is not None:
+                output_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                output_handle.flush()
+            stats["written"] += 1
+            update_progress(progress, stats)
 
     async def handle_result(index: int, result: dict[str, Any]) -> None:
         await update_stat("results")
@@ -710,8 +810,7 @@ async def extract_eval_results(
         if correct:
             await update_stat("correct")
 
-        async with lock:
-            output[index] = record
+        await write_record(result, record)
 
     async def producer() -> None:
         for index, result in enumerate(results):
@@ -736,15 +835,8 @@ async def extract_eval_results(
         for _ in range(worker_count):
             group.create_task(worker())
 
-    records = [record for record in output if record is not None]
-    if output_handle is not None:
-        for record in records:
-            output_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        output_handle.flush()
-
-    stats["written"] = len(records)
     update_progress(progress, stats)
-    return records, stats
+    return output, stats
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -782,12 +874,15 @@ def main(argv: list[str] | None = None) -> int:
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if args.mode == "eval":
-        with args.output_path.open("w", encoding="utf-8") as handle:
-            progress = tqdm(total=len(results), desc="eval-extract", unit="result", file=sys.stderr)
+        existing_records = load_jsonl(args.output_path)
+        completed_keys = existing_output_keys(args.output_path)
+        remaining_results = pending_results(results, completed_keys)
+        with args.output_path.open("a", encoding="utf-8") as handle:
+            progress = tqdm(total=len(remaining_results), desc="eval-extract", unit="result", file=sys.stderr)
             try:
                 records, stats = asyncio.run(
                     extract_eval_results(
-                        results,
+                        remaining_results,
                         template,
                         judge_template,
                         output_handle=handle,
@@ -798,17 +893,21 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 progress.close()
 
+        all_records = [*existing_records, *records]
         print(
             json.dumps(
                 {
                     "mode": args.mode,
+                    "total_results": len(results),
                     "results": stats["results"],
+                    "skipped_existing": len(results) - len(remaining_results),
                     "matched": stats["matched"],
                     "correct": stats["correct"],
                     "written": stats["written"],
+                    "total_written": len(all_records),
                     "model_failed": stats["model_failed"],
-                    "average_f1": sum(float(record.get("f1") or 0.0) for record in records) / len(records)
-                    if records
+                    "average_f1": sum(float(record.get("f1") or 0.0) for record in all_records) / len(all_records)
+                    if all_records
                     else 0.0,
                     "concurrency": args.concurrency,
                     "output_path": str(args.output_path),
@@ -820,15 +919,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     session_index = load_session_index(args.sessions_dir)
-    with args.output_path.open("w", encoding="utf-8") as handle:
-        progress = tqdm(total=len(results), desc="extract", unit="result", file=sys.stderr)
+    existing_counts = existing_training_question_counts(args.output_path)
+    completed_keys = completed_training_keys(results, session_index, existing_counts)
+    remaining_results = pending_results(results, completed_keys)
+    with args.output_path.open("a", encoding="utf-8") as handle:
+        progress = tqdm(total=len(remaining_results), desc="extract", unit="result", file=sys.stderr)
         try:
             _, stats = asyncio.run(
                 extract_training_examples(
-                    results,
+                    remaining_results,
                     session_index,
                     template,
                     output_handle=handle,
+                    existing_counts=existing_counts,
                     progress=progress,
                     concurrency=args.concurrency,
                 )
@@ -840,7 +943,9 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "mode": args.mode,
+                "total_results": len(results),
                 "results": stats["results"],
+                "skipped_existing": len(results) - len(remaining_results),
                 "matched": stats["matched"],
                 "correct": stats["correct"],
                 "written": stats["written"],
