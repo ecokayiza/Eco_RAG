@@ -16,6 +16,16 @@ from tqdm import tqdm
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DEFAULT_CORPUS_PATH = DEFAULT_DATA_DIR / "retrieval_corpus" / "wiki18_100w.jsonl"
 DEFAULT_INDEX_PATH = DEFAULT_DATA_DIR / "retrieval_corpus" / "e5_flat_inner.index"
+DEFAULT_DATABASE_SEARCH_TOP_K = 4
+MAX_DATABASE_SEARCH_TOP_K = 5
+
+
+def clamp_database_search_top_k(top_k: Any, default: int = DEFAULT_DATABASE_SEARCH_TOP_K) -> int:
+    try:
+        requested = int(top_k or default)
+    except (TypeError, ValueError):
+        requested = default
+    return max(1, min(requested, MAX_DATABASE_SEARCH_TOP_K))
 
 
 class JsonlDocstore:
@@ -56,10 +66,11 @@ class FlashRAGIndex:
         import numpy as np
 
         query_vector = np.asarray([embed_query(query)], dtype="float32")
+        limit = clamp_database_search_top_k(top_k)
         items = []
         with self.lock:
             self.faiss.normalize_L2(query_vector)
-            _, ids = self.index.search(query_vector, max(1, int(top_k or 4)))
+            _, ids = self.index.search(query_vector, limit)
             for row in ids[0]:
                 row = int(row)
                 if row < 0:
@@ -96,7 +107,12 @@ class FlashRAGToolClient:
                         "type": "object",
                         "properties": {
                             "query": {"type": "string", "description": "Focused retrieval query."},
-                            "top_k": {"type": "integer", "description": "Number of passages to retrieve."},
+                            "top_k": {
+                                "type": "integer",
+                                "description": "Number of passages to retrieve, capped at 5.",
+                                "minimum": 1,
+                                "maximum": MAX_DATABASE_SEARCH_TOP_K,
+                            },
                         },
                         "required": ["query", "top_k"],
                     },
@@ -108,8 +124,7 @@ class FlashRAGToolClient:
         if name != "database_search":
             return {"type": "context", "skill_name": name, "items": [], "error": f"Unsupported eval tool: {name}"}
         query = clean(str(args.get("query") or ""))
-        requested_top_k = int(args["top_k"])
-        return await asyncio.to_thread(self.index.database_search, query, max(1, requested_top_k))
+        return await asyncio.to_thread(self.index.database_search, query, clamp_database_search_top_k(args.get("top_k")))
 
 
 def flashrag_tool_client_factory(index: FlashRAGIndex):

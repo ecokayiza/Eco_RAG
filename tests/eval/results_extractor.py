@@ -37,7 +37,12 @@ DEFAULT_TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Focused retrieval query."},
-                    "top_k": {"type": "integer", "description": "Number of passages to retrieve."},
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of passages to retrieve, capped at 5.",
+                        "minimum": 1,
+                        "maximum": 5,
+                    },
                 },
                 "required": ["query", "top_k"],
             },

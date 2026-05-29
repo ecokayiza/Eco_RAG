@@ -6,11 +6,22 @@ from typing import Any
 # the stdio MCP request path can hang under the Windows child process.
 from mcp_server.rag import database_registry, embedder, schema, vector_database
 
+DEFAULT_DATABASE_SEARCH_TOP_K = 4
+MAX_DATABASE_SEARCH_TOP_K = 5
+
+
+def _clamp_top_k(top_k: Any, default: int = DEFAULT_DATABASE_SEARCH_TOP_K) -> int:
+    try:
+        requested = int(top_k or default)
+    except (TypeError, ValueError):
+        requested = default
+    return max(1, min(requested, MAX_DATABASE_SEARCH_TOP_K))
+
 
 def database_search(query: str, top_k: int = 4) -> dict[str, Any]:
     """Search the local Echo vector database for semantically related chunks."""
     cleaned = " ".join((query or "").strip().split())
-    limit = max(1, min(int(top_k or 4), 8))
+    limit = _clamp_top_k(top_k)
     if not cleaned:
         return {
             "type": "context",
