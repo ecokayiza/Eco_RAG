@@ -32,6 +32,13 @@ import type {
 } from "@/types/chat";
 
 type StatusTone = "neutral" | "success" | "error";
+type ActiveStreamKind = "send" | "regenerate" | "continue";
+
+interface ActiveStream {
+  abortController: AbortController;
+  kind: ActiveStreamKind;
+  stop: () => void;
+}
 
 interface WorkspaceState {
   ready: boolean;
@@ -346,6 +353,90 @@ function buildPendingRegenerateMessages(
   ];
 }
 
+function splitStoppedWorkflowMessages(messages: MessageRecord[], workflow: WorkflowSnapshot) {
+  const workflowTurnId = workflow.workflow_turn_id ?? null;
+  const pendingAssistant = messages.find(
+    (message) => message.pending && message.role === "assistant" && message.workflow_turn_id === workflowTurnId
+  );
+  const liveRecords = workflowTurnId
+    ? messages.filter((message) => message.workflow_turn_id === workflowTurnId && !message.pending)
+    : [];
+  const baseMessages = messages.filter(
+    (message) =>
+      message.id !== pendingAssistant?.id &&
+      (!workflowTurnId || message.workflow_turn_id !== workflowTurnId || message.pending)
+  );
+  return {
+    baseMessages,
+    liveRecords,
+    content: pendingAssistant?.content ?? "Thinking...",
+  };
+}
+
+function buildPendingContinueMessages(
+  baseMessages: MessageRecord[],
+  workflow: WorkflowSnapshot,
+  liveRecords: MessageRecord[],
+  content: string
+) {
+  const workflowTurnId = workflow.workflow_turn_id ?? liveRecords.at(-1)?.workflow_turn_id ?? null;
+  return [
+    ...baseMessages,
+    ...liveRecords,
+    {
+      id: "pending-assistant",
+      role: "assistant" as const,
+      content,
+      pending: true,
+      workflow,
+      workflow_turn_id: workflowTurnId,
+    },
+  ];
+}
+
+function markPendingWorkflowStopped(messages: MessageRecord[], workflow: WorkflowSnapshot) {
+  const workflowTurnId = workflow.workflow_turn_id ?? null;
+  const stoppedWorkflow = { ...workflow, status: "stopped", active_node: workflow.active_node ?? null };
+  return messages.map((message) =>
+    message.pending && message.role === "assistant" && (message.workflow_turn_id ?? null) === workflowTurnId
+      ? {
+          ...message,
+          content: message.content === "Thinking..." ? "Stopped. Continue when ready." : message.content,
+          workflow: stoppedWorkflow,
+        }
+      : message
+  );
+}
+
+function restoreStoppedWorkflowFromDraft(payload: SessionState, meta: MetaResponse | null) {
+  const draft = payload.workflow_draft;
+  if (!draft || !meta) {
+    return null;
+  }
+
+  const workflow = normalizeWorkflow(meta, draft.workflow);
+  if (!workflow) {
+    return null;
+  }
+
+  const stoppedWorkflow = { ...workflow, status: "stopped", active_node: workflow.active_node ?? null };
+  const liveRecords = draft.records.flatMap((record, index) => {
+    const normalized = normalizeLiveWorkflowRecord(record, {
+      index,
+      fallbackTurnId: stoppedWorkflow.workflow_turn_id,
+    });
+    return normalized ? [normalized] : [];
+  });
+  const content = draft.content?.trim() || stoppedWorkflow.answer?.trim() || "Stopped. Continue when ready.";
+  const messages = buildPendingContinueMessages(payload.messages, stoppedWorkflow, liveRecords, content);
+
+  return {
+    messages,
+    workflow: stoppedWorkflow,
+    sessionId: payload.session.session_id,
+  };
+}
+
 export function useChatWorkspace() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [messageDraft, setMessageDraft] = useState("");
@@ -354,6 +445,13 @@ export function useChatWorkspace() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const uploadPollRef = useRef<string | null>(null);
+  const activeStreamRef = useRef<ActiveStream | null>(null);
+  const [activeStreamKind, setActiveStreamKind] = useState<ActiveStreamKind | null>(null);
+  const [stoppedWorkflow, setStoppedWorkflow] = useState<{
+    messages: MessageRecord[];
+    workflow: WorkflowSnapshot;
+    sessionId: string;
+  } | null>(null);
   const settings = useSettingsManagement({
     onRuntimeSettingsRefresh: (health, meta) => {
       dispatch({ type: "bootstrap", meta, health });
@@ -430,16 +528,13 @@ export function useChatWorkspace() {
           return;
         }
 
-        startTransition(() => {
-          dispatch({ type: "session:apply", payload });
-          dispatch({
-            type: "status",
-            text: payload.messages.length ? "Loaded session." : "Ready",
-            tone: "success",
-            liveLabel: "Ready",
-          });
+        applySessionPayload(payload, undefined, meta);
+        dispatch({
+          type: "status",
+          text: payload.messages.length ? "Loaded session." : "Ready",
+          tone: "success",
+          liveLabel: "Ready",
         });
-        setSystemPromptDraft(getPromptFromMessages(payload.messages, meta.default_system_prompt));
         dispatch({ type: "ready" });
       } catch (error) {
         if (cancelled) {
@@ -464,19 +559,26 @@ export function useChatWorkspace() {
     dispatch({ type: "session:select", sessionId });
   }
 
-  function applySessionPayload(payload: SessionState, workflow?: WorkflowSnapshot | null) {
-    const rawWorkflow = normalizeWorkflow(state.meta, workflow ?? null);
+  function applySessionPayload(
+    payload: SessionState,
+    workflow?: WorkflowSnapshot | null,
+    metaOverride: MetaResponse | null = state.meta
+  ) {
+    const restoredWorkflow = workflow ? null : restoreStoppedWorkflowFromDraft(payload, metaOverride);
+    const rawWorkflow = normalizeWorkflow(metaOverride, workflow ?? restoredWorkflow?.workflow ?? null);
+    const nextPayload = restoredWorkflow ? { ...payload, messages: restoredWorkflow.messages } : payload;
+    setStoppedWorkflow(restoredWorkflow);
     startTransition(() => {
       dispatch({
         type: "session:apply",
-        payload,
+        payload: nextPayload,
         workflow: rawWorkflow,
       });
     });
 
-    syncSelectedSession(payload.session.session_id);
+    syncSelectedSession(nextPayload.session.session_id);
 
-    const nextPrompt = getPromptFromMessages(payload.messages, getDefaultPrompt(state.meta));
+    const nextPrompt = getPromptFromMessages(nextPayload.messages, getDefaultPrompt(metaOverride));
     setSystemPromptDraft(nextPrompt);
   }
 
@@ -502,6 +604,38 @@ export function useChatWorkspace() {
         messageInputRef.current?.focus();
       });
     }
+  }
+
+  function createWorkflowStream(kind: ActiveStreamKind, onStop: () => void) {
+    const abortController = new AbortController();
+    activeStreamRef.current = {
+      abortController,
+      kind,
+      stop: () => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        onStop();
+        abortController.abort();
+        if (activeStreamRef.current?.abortController === abortController) {
+          activeStreamRef.current = null;
+        }
+        setActiveStreamKind(null);
+      },
+    };
+    setActiveStreamKind(kind);
+    return abortController;
+  }
+
+  function clearWorkflowStream(abortController: AbortController) {
+    if (activeStreamRef.current?.abortController === abortController) {
+      activeStreamRef.current = null;
+      setActiveStreamKind(null);
+    }
+  }
+
+  function stopWorkflow() {
+    activeStreamRef.current?.stop();
   }
 
   async function loadSessionSnapshot(sessionId: string) {
@@ -1024,6 +1158,7 @@ export function useChatWorkspace() {
     }
 
     setMessageDraft("");
+    setStoppedWorkflow(null);
     startTransition(() => {
       dispatch({ type: "workflow:set", workflow: pendingWorkflow });
       dispatch({
@@ -1031,6 +1166,21 @@ export function useChatWorkspace() {
         messages: buildPendingSendMessages(stableMessages, outgoing, currentWorkflow, liveRecords, currentContent),
       });
     });
+
+    const stopCurrentWorkflow = () => {
+      const stoppedSnapshot = { ...currentWorkflow, status: "stopped", active_node: currentWorkflow.active_node ?? null };
+      const stoppedMessages = markPendingWorkflowStopped(
+        buildPendingSendMessages(stableMessages, outgoing, stoppedSnapshot, liveRecords, currentContent),
+        stoppedSnapshot
+      );
+      setStoppedWorkflow({ messages: stoppedMessages, workflow: stoppedSnapshot, sessionId: activeSessionId });
+      startTransition(() => {
+        dispatch({ type: "workflow:set", workflow: stoppedSnapshot });
+        dispatch({ type: "messages:set", messages: stoppedMessages });
+      });
+      dispatch({ type: "status", text: "Workflow stopped. Continue when ready.", liveLabel: "Stopped" });
+    };
+    const abortController = createWorkflowStream("send", stopCurrentWorkflow);
 
     await withBusy(
       "Thinking...",
@@ -1040,6 +1190,7 @@ export function useChatWorkspace() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: abortController.signal,
             body: JSON.stringify({
               message: outgoing,
             }),
@@ -1119,6 +1270,7 @@ export function useChatWorkspace() {
             },
             onDone: async (payload) => {
               const response = payload as unknown as ChatResponse;
+              setStoppedWorkflow(null);
               applySessionPayload(response, response.workflow ?? currentWorkflow);
               dispatch({ type: "status", text: "Reply received.", tone: "success", liveLabel: "Ready" });
             },
@@ -1126,6 +1278,10 @@ export function useChatWorkspace() {
         );
       },
       async (detail) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        setStoppedWorkflow(null);
         setMessageDraft(outgoing);
         startTransition(() => {
           dispatch({ type: "messages:set", messages: stableMessages });
@@ -1137,6 +1293,7 @@ export function useChatWorkspace() {
         dispatch({ type: "status", text: detail, tone: "error", liveLabel: "Error" });
       }
     );
+    clearWorkflowStream(abortController);
   }
 
   async function regenerateMessage(message: MessageRecord) {
@@ -1161,6 +1318,7 @@ export function useChatWorkspace() {
     let currentContent = "Thinking...";
     let liveRecords: MessageRecord[] = [];
 
+    setStoppedWorkflow(null);
     startTransition(() => {
       dispatch({ type: "workflow:set", workflow: pendingWorkflow });
       dispatch({
@@ -1168,6 +1326,21 @@ export function useChatWorkspace() {
         messages: buildPendingRegenerateMessages(baseMessages, currentWorkflow, liveRecords, currentContent),
       });
     });
+
+    const stopCurrentWorkflow = () => {
+      const stoppedSnapshot = { ...currentWorkflow, status: "stopped", active_node: currentWorkflow.active_node ?? null };
+      const stoppedMessages = markPendingWorkflowStopped(
+        buildPendingRegenerateMessages(baseMessages, stoppedSnapshot, liveRecords, currentContent),
+        stoppedSnapshot
+      );
+      setStoppedWorkflow({ messages: stoppedMessages, workflow: stoppedSnapshot, sessionId: state.sessionId! });
+      startTransition(() => {
+        dispatch({ type: "workflow:set", workflow: stoppedSnapshot });
+        dispatch({ type: "messages:set", messages: stoppedMessages });
+      });
+      dispatch({ type: "status", text: "Workflow stopped. Continue when ready.", liveLabel: "Stopped" });
+    };
+    const abortController = createWorkflowStream("regenerate", stopCurrentWorkflow);
 
     await withBusy(
       "Regenerating reply...",
@@ -1177,6 +1350,7 @@ export function useChatWorkspace() {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: abortController.signal,
             body: JSON.stringify({}),
           },
           {
@@ -1241,6 +1415,7 @@ export function useChatWorkspace() {
             },
             onDone: async (payload) => {
               const response = payload as unknown as ChatResponse;
+              setStoppedWorkflow(null);
               applySessionPayload(response, response.workflow ?? currentWorkflow);
               dispatch({ type: "status", text: "Message regenerated.", tone: "success", liveLabel: "Ready" });
             },
@@ -1248,6 +1423,10 @@ export function useChatWorkspace() {
         );
       },
       async (detail) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        setStoppedWorkflow(null);
         startTransition(() => {
           dispatch({ type: "messages:set", messages: state.messages });
           dispatch({
@@ -1258,6 +1437,126 @@ export function useChatWorkspace() {
         dispatch({ type: "status", text: detail, tone: "error", liveLabel: "Error" });
       }
     );
+    clearWorkflowStream(abortController);
+  }
+
+  async function continueWorkflow() {
+    if (!state.sessionId || state.busy || !stoppedWorkflow || stoppedWorkflow.sessionId !== state.sessionId) {
+      return;
+    }
+
+    let currentWorkflow = stoppedWorkflow.workflow;
+    let { baseMessages, liveRecords, content: currentContent } = splitStoppedWorkflowMessages(
+      stoppedWorkflow.messages,
+      currentWorkflow
+    );
+
+    startTransition(() => {
+      dispatch({ type: "workflow:set", workflow: currentWorkflow });
+      dispatch({
+        type: "messages:set",
+        messages: buildPendingContinueMessages(baseMessages, currentWorkflow, liveRecords, currentContent),
+      });
+    });
+
+    const stopCurrentWorkflow = () => {
+      const stoppedSnapshot = { ...currentWorkflow, status: "stopped", active_node: currentWorkflow.active_node ?? null };
+      const stoppedMessages = markPendingWorkflowStopped(
+        buildPendingContinueMessages(baseMessages, stoppedSnapshot, liveRecords, currentContent),
+        stoppedSnapshot
+      );
+      setStoppedWorkflow({ messages: stoppedMessages, workflow: stoppedSnapshot, sessionId: state.sessionId! });
+      startTransition(() => {
+        dispatch({ type: "workflow:set", workflow: stoppedSnapshot });
+        dispatch({ type: "messages:set", messages: stoppedMessages });
+      });
+      dispatch({ type: "status", text: "Workflow stopped. Continue when ready.", liveLabel: "Stopped" });
+    };
+    const abortController = createWorkflowStream("continue", stopCurrentWorkflow);
+
+    await withBusy(
+      "Continuing workflow...",
+      async () => {
+        await readEventStream(
+          `/api/sessions/${encodeURIComponent(state.sessionId!)}/workflow/continue/stream`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: abortController.signal,
+            body: JSON.stringify({}),
+          },
+          {
+            onEvent: async (eventName, payload) => {
+              if (eventName === "record") {
+                const nextRecord = normalizeLiveWorkflowRecord(payload, {
+                  index: liveRecords.length,
+                  fallbackTurnId: currentWorkflow.workflow_turn_id,
+                });
+                if (!nextRecord) {
+                  return;
+                }
+
+                liveRecords = upsertLiveWorkflowRecord(liveRecords, nextRecord);
+                startTransition(() => {
+                  dispatch({
+                    type: "messages:set",
+                    messages: buildPendingContinueMessages(baseMessages, currentWorkflow, liveRecords, currentContent),
+                  });
+                });
+                return;
+              }
+
+              if (eventName !== "workflow") {
+                return;
+              }
+
+              const workflow = normalizeWorkflow(state.meta, payload as unknown as WorkflowSnapshot);
+              if (!workflow) {
+                throw new Error("Workflow event payload is empty.");
+              }
+              currentWorkflow = workflow;
+              startTransition(() => {
+                dispatch({ type: "workflow:set", workflow });
+                dispatch({
+                  type: "messages:set",
+                  messages: buildPendingContinueMessages(baseMessages, currentWorkflow, liveRecords, currentContent),
+                });
+              });
+              dispatch({
+                type: "status",
+                text: workflow.active_node ? `Workflow ${workflow.status} at ${workflow.active_node}.` : `Workflow ${workflow.status}.`,
+                liveLabel: "Working",
+              });
+            },
+            onChunk: async (payload) => {
+              if (typeof payload.content !== "string") {
+                throw new Error("Streaming chunk is missing content.");
+              }
+              currentContent = payload.content;
+              startTransition(() => {
+                dispatch({
+                  type: "messages:set",
+                  messages: buildPendingContinueMessages(baseMessages, currentWorkflow, liveRecords, currentContent),
+                });
+              });
+            },
+            onDone: async (payload) => {
+              const response = payload as unknown as ChatResponse;
+              setStoppedWorkflow(null);
+              applySessionPayload(response, response.workflow ?? currentWorkflow);
+              dispatch({ type: "status", text: "Workflow continued.", tone: "success", liveLabel: "Ready" });
+            },
+          }
+        );
+      },
+      async (detail) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        dispatch({ type: "status", text: detail, tone: "error", liveLabel: "Error" });
+      }
+    );
+    clearWorkflowStream(abortController);
   }
 
   return {
@@ -1333,13 +1632,17 @@ export function useChatWorkspace() {
       systemPromptDraft,
       actions: {
         applySystemPrompt,
+        continueWorkflow,
         openDeleteDialog: openDeleteMessageDialog,
         openRollbackDialog,
         regenerate: regenerateMessage,
         resetSystemPromptDraft,
         send: sendMessage,
+        stopWorkflow,
         updateContent: updateMessageContent,
       },
+      canContinue: Boolean(stoppedWorkflow && stoppedWorkflow.sessionId === state.sessionId && !state.busy),
+      canStop: Boolean(activeStreamKind && state.busy),
     },
     dialogs: {
       confirmDialog,

@@ -104,16 +104,8 @@ Run eval generation:
 
 ```bash
 python tests/eval/eval.py \
-  --hotpotqa-path tests/data/hotpotqa/test-1000.jsonl \
-  --results-path tests/eval/results_test.jsonl \
-  --max-questions 0 \
-  --concurrency 8
-```
-
-```bash
-python tests/eval/eval.py \
-  --hotpotqa-path tests/data/hotpotqa/test-1000.jsonl \
-  --results-path tests/eval/results_test_original.jsonl \
+  --dataset 2wiki \
+  --results-path 2wiki_test-v2.jsonl \
   --max-questions 0 \
   --concurrency 8
 ```
@@ -123,8 +115,8 @@ Extract eval rows and scores:
 ```bash
 python tests/eval/results_extractor.py \
   --mode eval \
-  --results-path tests/eval/results_test.jsonl \
-  --output-path tests/eval/hotpotqa_test_results.jsonl \
+  --results-path 2wiki_test-v2.jsonl \
+  --output-path 2wiki_test_results-v2.jsonl \
   --concurrency 20
 ```
 

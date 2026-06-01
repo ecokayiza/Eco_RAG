@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+import asyncio
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 from uuid import uuid4
@@ -31,6 +32,7 @@ class SessionState:
 
     session: dict[str, Any]
     messages: list[dict[str, Any]]
+    workflow_draft: dict[str, Any] | None = field(default=None, kw_only=True)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -99,7 +101,7 @@ class ChatService:
         sessions, messages = self._chat(session_id)
         sessions.ensure()
         self._ensure_default_system(sessions, messages)
-        return SessionState(session=sessions.summary(), messages=messages.history())
+        return self._session_state(session_id, sessions, messages)
 
     async def stream_message(
         self,
@@ -126,10 +128,14 @@ class ChatService:
         workflow_snapshot: dict[str, Any] | None = None
 
         try:
-            async for item in self._workflow().stream_chat(
+            workflow = self._workflow()
+            async for item in self._stream_workflow_chat(
+                workflow,
                 cleaned_message,
                 context=messages.build_context(),
                 workflow_turn_id=user_message.id,
+                session_id=session_id,
+                user_message_id=user_message.id,
             ):
                 if item["event"] == "chunk":
                     yield item
@@ -143,6 +149,8 @@ class ChatService:
                     continue
                 workflow_result = item["data"]
                 workflow_snapshot = workflow_result["snapshot"]
+        except asyncio.CancelledError:
+            raise
         except Exception:
             await self.delete_message(session_id, user_message.id)
             raise
@@ -169,7 +177,7 @@ class ChatService:
         sessions.ensure()
         self._ensure_default_system(sessions, messages)
         await messages.apply("system_prompt", content=content)
-        return SessionState(session=sessions.summary(), messages=messages.history())
+        return self._session_state(session_id, sessions, messages)
 
     async def update_message(self, session_id: str, message_id: str, content: str) -> SessionState:
         sessions, messages = self._chat(session_id)
@@ -178,7 +186,7 @@ class ChatService:
         previous_first_user = self._first_user_message(messages)
         await messages.apply("edit", message_id=message_id, content=content)
         self._sync_inferred_title(sessions, messages, previous_first_user)
-        return SessionState(session=sessions.summary(), messages=messages.history())
+        return self._session_state(session_id, sessions, messages)
 
     async def delete_message(self, session_id: str, message_id: str) -> SessionState:
         sessions, messages = self._chat(session_id)
@@ -187,7 +195,7 @@ class ChatService:
         previous_first_user = self._first_user_message(messages)
         await messages.apply("delete", message_id=message_id)
         self._sync_inferred_title(sessions, messages, previous_first_user)
-        return SessionState(session=sessions.summary(), messages=messages.history())
+        return self._session_state(session_id, sessions, messages)
 
     async def rollback_message(self, session_id: str, message_id: str) -> SessionState:
         sessions, messages = self._chat(session_id)
@@ -196,7 +204,7 @@ class ChatService:
         previous_first_user = self._first_user_message(messages)
         await messages.apply("rollback", message_id=message_id)
         self._sync_inferred_title(sessions, messages, previous_first_user)
-        return SessionState(session=sessions.summary(), messages=messages.history())
+        return self._session_state(session_id, sessions, messages)
 
     async def stream_regenerate_message(
         self,
@@ -212,10 +220,75 @@ class ChatService:
         workflow_result: dict[str, Any] | None = None
         workflow_snapshot: dict[str, Any] | None = None
 
-        async for item in self._workflow().stream_chat(
+        workflow = self._workflow()
+        async for item in self._stream_workflow_chat(
+            workflow,
             question,
             context=messages.build_context(),
             workflow_turn_id=user_message_id,
+            session_id=session_id,
+            user_message_id=user_message_id,
+        ):
+            if item["event"] == "chunk":
+                yield item
+                continue
+            if item["event"] == "state":
+                workflow_snapshot = item["data"]
+                yield {"event": "workflow", "data": workflow_snapshot}
+                continue
+            if item["event"] == "record":
+                yield item
+                continue
+            workflow_result = item["data"]
+            workflow_snapshot = workflow_result["snapshot"]
+
+        if workflow_result is None or workflow_snapshot is None:
+            raise ValueError("Workflow stream ended without a final result.")
+
+        self._append_workflow_records(messages, workflow_result["records"], workflow_result.get("token_usage"))
+        reply = self._reply(workflow_snapshot["answer"])
+        self._sync_inferred_title(sessions, messages, previous_first_user)
+
+        result = ChatResult(
+            session=sessions.summary(),
+            messages=messages.history(),
+            reply=reply,
+            token_usage=workflow_result.get("token_usage"),
+            workflow=workflow_snapshot,
+        )
+        yield {"event": "done", "data": result.to_dict()}
+
+    async def stream_continue_workflow(
+        self,
+        session_id: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Resume the saved live workflow draft for one session."""
+        sessions, messages = self._chat(session_id)
+        sessions.ensure()
+        self._ensure_default_system(sessions, messages)
+        previous_first_user = self._first_user_message(messages)
+        workflow = self._workflow()
+        draft = workflow.load_draft(session_id) if hasattr(workflow, "load_draft") else None
+        if not draft:
+            raise ValueError("No stopped workflow is available to continue.")
+
+        user_message_id = str(draft.get("user_message_id") or "").strip()
+        user_message = next((message for message in messages.get() if message.id == user_message_id), None)
+        if user_message is None or user_message.role != "user":
+            if hasattr(workflow, "clear_draft"):
+                workflow.clear_draft(session_id)
+            raise ValueError("Stopped workflow user message is no longer available.")
+
+        workflow_result: dict[str, Any] | None = None
+        workflow_snapshot: dict[str, Any] | None = None
+
+        async for item in self._stream_workflow_chat(
+            workflow,
+            user_message.content,
+            context=messages.build_context(),
+            workflow_turn_id=user_message.id,
+            session_id=session_id,
+            user_message_id=user_message.id,
         ):
             if item["event"] == "chunk":
                 yield item
@@ -266,12 +339,73 @@ class ChatService:
         )
         return sessions, messages
 
+    def _session_state(self, session_id: str, sessions: Sessions, messages: Messages) -> SessionState:
+        return SessionState(
+            session=sessions.summary(),
+            messages=messages.history(),
+            workflow_draft=self._workflow_draft_payload(session_id, messages),
+        )
+
+    def _workflow_draft_payload(self, session_id: str, messages: Messages) -> dict[str, Any] | None:
+        workflow = self._workflow()
+        draft = workflow.load_draft(session_id) if hasattr(workflow, "load_draft") else None
+        if not draft:
+            return None
+
+        user_message_id = str(draft.get("user_message_id") or "").strip()
+        user_message = next((message for message in messages.get() if message.id == user_message_id), None)
+        if user_message is None or user_message.role != "user":
+            if hasattr(workflow, "clear_draft"):
+                workflow.clear_draft(session_id)
+            return None
+
+        snapshot = dict(draft["snapshot"])
+        snapshot["status"] = "stopped"
+        return {
+            "session_id": session_id,
+            "user_message_id": user_message_id,
+            "workflow": snapshot,
+            "records": [dict(item) for item in draft["records"]],
+            "content": str(draft.get("state", {}).get("streamed_answer") or snapshot.get("answer") or ""),
+        }
+
     def _workflow(self) -> WorkflowService:
         from ..workflow.service import WorkflowService
 
         if self.workflow_factory is not None:
             return self.workflow_factory()
-        return WorkflowService(model_factory=self.model_factory, tool_client_factory=self.tool_client_factory)
+        return WorkflowService(
+            model_factory=self.model_factory,
+            tool_client_factory=self.tool_client_factory,
+            enable_drafts=True,
+        )
+
+    @staticmethod
+    async def _stream_workflow_chat(
+        workflow: WorkflowService,
+        question: str,
+        *,
+        context: list[dict[str, Any]],
+        workflow_turn_id: str,
+        session_id: str,
+        user_message_id: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream workflow chat while preserving older test doubles that lack draft kwargs."""
+        try:
+            iterator = workflow.stream_chat(
+                question,
+                context=context,
+                workflow_turn_id=workflow_turn_id,
+                session_id=session_id,
+                user_message_id=user_message_id,
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+            iterator = workflow.stream_chat(question, context=context, workflow_turn_id=workflow_turn_id)
+
+        async for item in iterator:
+            yield item
 
     @staticmethod
     def _append_workflow_records(messages: Messages, records: list[dict[str, Any]], total_usage: dict[str, Any] | None = None):

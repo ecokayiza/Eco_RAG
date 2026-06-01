@@ -300,6 +300,13 @@
   font-size: 0.78rem;
 }
 
+.composer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
 
 .message-card__body--editing {
   margin: 0;
@@ -334,7 +341,7 @@
 }
 
 .message-thoughts__content {
-  max-height: 200px;
+  max-height: min(420px, 48vh);
   margin-top: 0.5rem;
   padding-top: 0.5rem;
   overflow-y: auto;
@@ -352,9 +359,69 @@
   line-height: 1.4;
 }
 
+.message-thoughts__log--plan,
+.message-thoughts__log--think {
+  align-items: stretch;
+}
+
+.message-thoughts__log--untagged {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .message-thoughts__log-node {
   color: #3b82f6;
   font-weight: 600;
+}
+
+.message-thoughts__tool {
+  min-width: 0;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.message-thoughts__tool-summary {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.message-thoughts__query-list {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.message-thoughts__query-chip {
+  max-width: 100%;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.message-thoughts__tool[open] .message-thoughts__tool-summary {
+  border-bottom: 1px dashed #e5e7eb;
+}
+
+.message-thoughts__tool-body {
+  min-width: 0;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem;
 }
 
 .message-thoughts__log-text {
@@ -365,6 +432,87 @@
   min-width: 0;
   display: grid;
   gap: 0.45rem;
+}
+
+.message-thoughts__plan {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #f8fbff;
+  color: #334155;
+}
+
+.message-thoughts__plan-label {
+  color: #2563eb;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.message-thoughts__plan-text {
+  min-width: 0;
+}
+
+.message-thoughts__plan-text > :first-child {
+  margin-top: 0;
+}
+
+.message-thoughts__plan-text > :last-child {
+  margin-bottom: 0;
+}
+
+.message-thoughts__think {
+  min-width: 0;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.55rem;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  background: #f7fef9;
+}
+
+.message-thoughts__think-section {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.message-thoughts__think-label {
+  color: #047857;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.message-thoughts__think-text {
+  min-width: 0;
+}
+
+.message-thoughts__think-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.message-thoughts__think-list-item {
+  min-width: 0;
+  padding-left: 0.1rem;
+}
+
+.message-thoughts__think-text > :first-child {
+  margin-top: 0;
+}
+
+.message-thoughts__think-text > :last-child {
+  margin-bottom: 0;
 }
 
 .message-thoughts__log-text > :first-child {

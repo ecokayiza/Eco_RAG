@@ -65,6 +65,7 @@ class SessionSummaryResponse(BaseModel):
 class SessionStateResponse(BaseModel):
     session: SessionSummaryResponse
     messages: list[dict[str, Any]]
+    workflow_draft: dict[str, Any] | None = None
 
 
 class DatabaseSummaryResponse(BaseModel):
@@ -669,6 +670,19 @@ def create_app(chat_service: ChatService | None = None):
         async def event_stream():
             try:
                 async for item in service.stream_regenerate_message(session_id, message_id):
+                    yield to_sse(item["event"], item["data"])
+            except ValueError as exc:
+                yield to_sse("error", {"detail": str(exc)})
+            except Exception as exc:
+                yield to_sse("error", {"detail": f"Chat request failed: {_exception_detail(exc)}"})
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.post("/api/sessions/{session_id}/workflow/continue/stream")
+    async def stream_continue_workflow(session_id: str):
+        async def event_stream():
+            try:
+                async for item in service.stream_continue_workflow(session_id):
                     yield to_sse(item["event"], item["data"])
             except ValueError as exc:
                 yield to_sse("error", {"detail": str(exc)})

@@ -19,7 +19,12 @@ export function normalizeWorkflow(meta: MetaResponse | null, workflow: WorkflowS
   if (!workflow.logs) {
     throw new Error("Workflow snapshot is missing logs.");
   }
-  if (workflow.status !== "completed" && workflow.status !== "failed" && workflow.active_node === undefined) {
+  if (
+    workflow.status !== "completed" &&
+    workflow.status !== "failed" &&
+    workflow.status !== "stopped" &&
+    workflow.active_node === undefined
+  ) {
     throw new Error("Workflow snapshot is missing active_node.");
   }
   return workflow;

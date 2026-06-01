@@ -23,10 +23,11 @@ export function MessageList({
   ready,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
   const workflowMessagesByTurn = new Map<string, MessageRecord[]>();
   const visibleMessages: MessageRecord[] = [];
 
-for (let i = 0; i < messages.length; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (message.role === "system") {
       continue;
@@ -56,15 +57,24 @@ for (let i = 0; i < messages.length; i++) {
 
   useEffect(() => {
     const node = listRef.current;
-    if (!node) {
+    if (!node || !shouldStickToBottomRef.current) {
       return;
     }
 
     node.scrollTop = node.scrollHeight;
   }, [messages]);
 
+  function handleScroll() {
+    const node = listRef.current;
+    if (!node) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = isNearScrollBottom(node);
+  }
+
   return (
-    <section className="message-list" aria-live="polite" ref={listRef}>
+    <section className="message-list" aria-live="polite" onScroll={handleScroll} ref={listRef}>
       {visibleMessages.length === 0 ? (
         <EmptyState
           description={ready ? "Ask a question to create the first meaningful exchange in this session." : "Connecting to the backend and restoring the selected thread."}
@@ -85,4 +95,8 @@ for (let i = 0; i < messages.length; i++) {
       )}
     </section>
   );
+}
+
+function isNearScrollBottom(element: HTMLElement, threshold = 48) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }

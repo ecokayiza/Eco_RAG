@@ -4,16 +4,24 @@ import { Button } from "@/components/common/Button";
 
 interface MessageComposerProps {
   busy: boolean;
+  canContinue: boolean;
+  canStop: boolean;
   value: string;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (value: string) => void;
+  onContinue: () => void;
+  onStop: () => void;
   onSubmit: () => void;
 }
 
 export function MessageComposer({
   busy,
+  canContinue,
+  canStop,
   inputRef,
   onChange,
+  onContinue,
+  onStop,
   onSubmit,
   value,
 }: MessageComposerProps) {
@@ -50,9 +58,21 @@ export function MessageComposer({
 
       <div className="composer__footer">
         <p className="composer__hint">Press Ctrl + Enter to send.</p>
-        <Button disabled={busy || value.trim().length === 0} type="submit" variant="primary">
-          Send Message
-        </Button>
+        <div className="composer__actions">
+          {canStop ? (
+            <Button onClick={onStop} type="button" variant="danger">
+              Stop
+            </Button>
+          ) : canContinue ? (
+            <Button onClick={onContinue} type="button" variant="secondary">
+              Continue
+            </Button>
+          ) : (
+            <Button disabled={busy || value.trim().length === 0} type="submit" variant="primary">
+              Send Message
+            </Button>
+          )}
+        </div>
       </div>
     </form>
   );

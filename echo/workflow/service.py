@@ -25,10 +25,20 @@ class WorkflowService:
         *,
         tool_client_factory: Callable[[], AbstractAsyncContextManager[ToolClient]] | None = None,
         draft_storage: dict[str, dict[str, Any]] | None = None,
+        enable_drafts: bool = False,
     ):
         self.model_factory = model_factory
         self.tool_client_factory = tool_client_factory
-        self.draft_store = WorkflowDraftStore(storage=draft_storage) if draft_storage is not None else None
+        self.draft_store = WorkflowDraftStore(storage=draft_storage) if enable_drafts or draft_storage is not None else None
+
+    def load_draft(self, session_id: str) -> dict[str, Any] | None:
+        """Load a saved live workflow draft when resumable workflows are enabled."""
+        return self.draft_store.load(session_id) if self.draft_store is not None else None
+
+    def clear_draft(self, session_id: str):
+        """Clear a saved live workflow draft when resumable workflows are enabled."""
+        if self.draft_store is not None:
+            self.draft_store.clear(session_id)
 
     async def stream(
         self,
@@ -128,6 +138,7 @@ class WorkflowService:
             current_state = dict(state)
             buffered_records = [dict(item) for item in records]
             latest_record: dict[str, Any] | None = None
+            self._persist_draft(draft_session_id, draft_user_message_id, current_state, runtime_tracker, buffered_records)
             yield {"event": "state", "data": runtime_tracker.snapshot(current_state)}
 
             try:

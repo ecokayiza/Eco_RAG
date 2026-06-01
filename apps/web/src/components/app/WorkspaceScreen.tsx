@@ -78,8 +78,14 @@ export function WorkspaceScreen({ app }: WorkspaceScreenProps) {
 
       <MessageComposer
         busy={state.busy}
+        canContinue={messages.canContinue}
+        canStop={messages.canStop}
         inputRef={refs.messageInputRef}
         onChange={messages.setDraft}
+        onContinue={() => {
+          void messages.actions.continueWorkflow();
+        }}
+        onStop={messages.actions.stopWorkflow}
         onSubmit={() => {
           void messages.actions.send();
         }}

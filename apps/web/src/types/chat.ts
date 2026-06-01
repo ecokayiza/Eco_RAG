@@ -47,6 +47,7 @@ export interface MessageRecord {
 export interface SessionState {
   session: SessionSummary;
   messages: MessageRecord[];
+  workflow_draft?: WorkflowDraftRecord | null;
 }
 
 export interface DatabaseRecord {
@@ -114,17 +115,27 @@ export interface WorkflowLog {
   message: string;
 }
 
+export type WorkflowStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+
 export interface WorkflowSnapshot {
   workflow_turn_id?: string | null;
   query: string;
   answer: string;
-  status: string;
+  status: WorkflowStatus | string;
   retrieve_round?: number | null;
   node_statuses: WorkflowNodeStatus[];
   active_node: string | null;
   tool_name?: string | null;
   logs: WorkflowLog[];
   errors: string[];
+}
+
+export interface WorkflowDraftRecord {
+  session_id: string;
+  user_message_id: string;
+  workflow: WorkflowSnapshot;
+  records: Record<string, unknown>[];
+  content?: string | null;
 }
 
 export interface ChatResponse extends SessionState {
