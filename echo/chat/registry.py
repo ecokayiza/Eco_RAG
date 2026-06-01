@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict, dataclass, field
 from hashlib import sha1
+from threading import Lock
 
 from ..settings import Config
 from .chat_model import BaseChatModel, OpenAIChatModel
@@ -8,6 +9,8 @@ from .chat_model import BaseChatModel, OpenAIChatModel
 WIRE_API_CHAT_COMPLETIONS = "chat_completions"
 WIRE_API_RESPONSES = "responses"
 WIRE_API_VALUES = {WIRE_API_CHAT_COMPLETIONS, WIRE_API_RESPONSES}
+_CHAT_MODEL_CACHE: dict[str, BaseChatModel] = {}
+_CHAT_MODEL_CACHE_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -233,6 +236,7 @@ def load_model_settings_document() -> ModelSettingsDocument:
 def save_model_settings_document(document: ModelSettingsDocument | dict) -> ModelSettingsDocument:
     resolved = normalize_model_settings_document(document)
     Config.MODELS_PATH.write_text(json.dumps(asdict(resolved), ensure_ascii=False, indent=2), encoding="utf-8")
+    clear_chat_model_cache()
     return resolved
 
 
@@ -290,6 +294,25 @@ def build_chat_model(settings: ChatModelSettings | None = None) -> BaseChatModel
     if not resolved.api_key:
         raise ValueError(f"Missing API key. Update '{Config.MODELS_PATH.name}' with a valid chat model api_key.")
 
+    if settings is None:
+        cache_key = _chat_model_cache_key(resolved)
+        with _CHAT_MODEL_CACHE_LOCK:
+            cached = _CHAT_MODEL_CACHE.get(cache_key)
+            if cached is None:
+                cached = _build_openai_chat_model(resolved)
+                _CHAT_MODEL_CACHE.clear()
+                _CHAT_MODEL_CACHE[cache_key] = cached
+            return cached
+
+    return _build_openai_chat_model(resolved)
+
+
+def clear_chat_model_cache():
+    with _CHAT_MODEL_CACHE_LOCK:
+        _CHAT_MODEL_CACHE.clear()
+
+
+def _build_openai_chat_model(resolved: ChatModelSettings) -> BaseChatModel:
     return OpenAIChatModel(
         api_key=resolved.api_key,
         base_url=resolved.base_url,
@@ -299,3 +322,7 @@ def build_chat_model(settings: ChatModelSettings | None = None) -> BaseChatModel
         top_p=resolved.top_p,
         custom_request_params=resolved.custom_request_params,
     )
+
+
+def _chat_model_cache_key(settings: ChatModelSettings) -> str:
+    return json.dumps(asdict(settings), ensure_ascii=False, sort_keys=True, default=str)

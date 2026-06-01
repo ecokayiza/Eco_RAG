@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -112,6 +113,58 @@ class StdioMCPToolClient(AbstractAsyncContextManager["StdioMCPToolClient"]):
         result = await self._session.call_tool(name, args)
         payload = _call_result_payload(name, result)
         return payload
+
+
+class SharedMCPToolClient:
+    """Process-wide warmed MCP client for workflow tool calls."""
+
+    def __init__(self, client: StdioMCPToolClient | None = None):
+        self._client = client or StdioMCPToolClient()
+        self._connect_lock = asyncio.Lock()
+        self._call_lock = asyncio.Lock()
+        self._connected = False
+
+    @property
+    def tool_names(self) -> set[str]:
+        return self._client.tool_names
+
+    @property
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        return self._client.tool_schemas
+
+    async def connect(self) -> "SharedMCPToolClient":
+        async with self._connect_lock:
+            if not self._connected:
+                await self._client.__aenter__()
+                self._connected = True
+        return self
+
+    async def aclose(self):
+        async with self._connect_lock:
+            if not self._connected:
+                return
+            async with self._call_lock:
+                await self._client.__aexit__(None, None, None)
+                self._connected = False
+
+    def context(self) -> AbstractAsyncContextManager[ToolClient]:
+        return _SharedMCPToolClientContext(self)
+
+    async def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        await self.connect()
+        async with self._call_lock:
+            return await self._client.call_tool(name, args)
+
+
+class _SharedMCPToolClientContext(AbstractAsyncContextManager[ToolClient]):
+    def __init__(self, owner: SharedMCPToolClient):
+        self.owner = owner
+
+    async def __aenter__(self) -> ToolClient:
+        return await self.owner.connect()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 
 
 def local_mcp_tool_client() -> StdioMCPToolClient:

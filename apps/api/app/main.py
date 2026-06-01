@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
@@ -40,6 +41,7 @@ from mcp_server.rag import (
     resolve_database_embedding_settings,
     select_database_settings,
 )
+from mcp_server.client import SharedMCPToolClient
 from mcp_server.rag.errors import IndexingError
 from echo.settings import AppSettings, load_app_settings, save_app_settings
 from echo.skills import SkillRecord, SkillSettingsDocument, load_skill_settings_document, save_skill_settings_document
@@ -292,13 +294,29 @@ def to_sse(event: str, payload: dict[str, Any]) -> str:
 
 def create_app(chat_service: ChatService | None = None):
     ensure_database_settings_document()
+    shared_tool_client = None if chat_service is not None else SharedMCPToolClient()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if shared_tool_client is not None:
+            await shared_tool_client.connect()
+            try:
+                build_chat_model()
+            except Exception:
+                pass
+        try:
+            yield
+        finally:
+            if shared_tool_client is not None:
+                await shared_tool_client.aclose()
 
     app = FastAPI(
         title="Echo API",
         version="0.1.0",
         description="Backend entrypoint for the Echo desktop and web clients.",
+        lifespan=lifespan,
     )
-    service = chat_service or ChatService()
+    service = chat_service or ChatService(tool_client_factory=shared_tool_client.context if shared_tool_client else None)
     upload_jobs: dict[str, dict[str, Any]] = _load_upload_jobs()
     upload_jobs_lock = Lock()
 
