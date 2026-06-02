@@ -6,18 +6,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def date(timezone: str | None = None) -> dict[str, Any]:
-    """Return current date, time, weekday, timezone, and UTC offset.
-
-    Use before answering questions about the current date/time, weekday,
-    timezone, today, tomorrow, or yesterday. The optional timezone must be an
-    IANA name such as UTC, Asia/Shanghai, or America/New_York.
-    """
+    """Return current date/time info for an optional IANA timezone."""
     try:
         tz_name = str(timezone or "").strip()
         tzinfo = ZoneInfo(tz_name) if tz_name else datetime.now().astimezone().tzinfo
         now = datetime.now(tzinfo).replace(microsecond=0)
         zone_name = tz_name or now.tzname() or str(now.tzinfo or "")
-        content = f"Current date and time is {now.strftime('%A, %B %d, %Y %H:%M:%S')} ({zone_name})."
+        content = f"{now.strftime('%A, %B %d, %Y %H:%M:%S')} ({zone_name})."
         return {
             "type": "context",
             "skill_name": "date",

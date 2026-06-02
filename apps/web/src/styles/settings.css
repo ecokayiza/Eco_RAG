@@ -378,6 +378,106 @@
   justify-self: start;
 }
 
+.settings-mcp-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.settings-mcp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 0.65rem;
+}
+
+.settings-mcp-card {
+  min-width: 0;
+  min-height: 6.5rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.72rem;
+  padding: 0.82rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+  cursor: pointer;
+}
+
+.settings-mcp-card:hover,
+.settings-mcp-card:focus-within {
+  border-color: #bfd4fb;
+  background: #fff;
+}
+
+.settings-mcp-card--enabled {
+  border-color: #c7dafc;
+  background: var(--accent-soft);
+}
+
+.settings-mcp-card input {
+  width: auto;
+  margin-top: 0.16rem;
+  padding: 0;
+}
+
+.settings-mcp-card > svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-top: 0.1rem;
+  color: var(--accent);
+}
+
+.settings-mcp-card__body {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.settings-mcp-card__title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.settings-mcp-card__title strong {
+  min-width: 0;
+  font-size: 0.93rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-mcp-card__title em {
+  flex: 0 0 auto;
+  padding: 0.12rem 0.38rem;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.settings-mcp-card code {
+  min-width: 0;
+  color: #38506f;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-mcp-card small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 
 .settings-page__validation {
   padding: 0.55rem 0.65rem;
@@ -565,6 +665,14 @@
   .settings-editor__header .button,
   .settings-detail__actions .button {
     width: 100%;
+  }
+
+  .settings-mcp-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-mcp-actions .button {
+    width: auto;
   }
 
   .settings-item {

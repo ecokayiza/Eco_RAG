@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+KNOWN_MCP_TOOL_NAMES = (
+    "load_skill",
+    "date",
+    "database_search",
+    "web_search",
+    "web_fetch",
+    "workspace_list_files",
+    "workspace_read_file",
+    "workspace_write_file",
+    "workspace_edit_file",
+)
+DEFAULT_MCP_ENABLED_TOOLS = ("database_search", "web_search", "web_fetch")
 
 
 class Config:
@@ -53,6 +66,7 @@ class AppSettings:
     default_database_backend: str = "chroma"
     web_search_backend: str = "auto"
     web_fetch_screenshot_mode: bool = False
+    mcp_enabled_tools: list[str] = field(default_factory=lambda: list(DEFAULT_MCP_ENABLED_TOOLS))
     enabled_skills: list[str] | None = None
     default_skills: list[str] | None = None
 
@@ -70,6 +84,7 @@ def normalize_app_settings(payload: dict | None = None) -> AppSettings:
         default_database_backend=_database_backend(data.get("default_database_backend")),
         web_search_backend=_web_search_backend(data.get("web_search_backend")),
         web_fetch_screenshot_mode=_bool(data.get("web_fetch_screenshot_mode"), False),
+        mcp_enabled_tools=_mcp_tool_list(data.get("mcp_enabled_tools")),
         enabled_skills=_optional_skill_list(data.get("enabled_skills")),
         default_skills=_optional_skill_list(data.get("default_skills")),
     )
@@ -148,3 +163,12 @@ def _optional_skill_list(value: object) -> list[str] | None:
         seen.add(cleaned)
         skills.append(cleaned)
     return skills
+
+
+def _mcp_tool_list(value: object) -> list[str]:
+    """Keep configured MCP tools in a stable known order."""
+    if not isinstance(value, list):
+        return list(DEFAULT_MCP_ENABLED_TOOLS)
+
+    requested = {item.strip() for item in value if isinstance(item, str) and item.strip()}
+    return [name for name in KNOWN_MCP_TOOL_NAMES if name in requested]

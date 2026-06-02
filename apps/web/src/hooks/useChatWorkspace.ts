@@ -1050,6 +1050,9 @@ export function useChatWorkspace() {
           const remainingSessions = state.sessions.filter((session) => session.session_id !== deletedId);
 
           await api.deleteSession(deletedId);
+          if (stoppedWorkflow?.sessionId === deletedId) {
+            setStoppedWorkflow(null);
+          }
           startTransition(() => {
             dispatch({ type: "session:remove", sessionId: deletedId });
           });

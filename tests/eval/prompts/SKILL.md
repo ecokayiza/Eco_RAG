@@ -9,7 +9,6 @@ Use this skill to choose tools for retrieval.
 
 ## Tool Choice
 
-- Use `date(timezone=None)` for the current date, current time, weekday, timezone, and questions about today, tomorrow, or yesterday.
 - For current date/time/weekday/timezone questions, calling `date` is mandatory before answering. Do not answer these from model memory, training data, or an assumed internal clock.
 - Use `database_search("query", top_k=3)` for indexed project files, user-provided documents, stored notes, local knowledge, and questions that should be grounded in the active Echo database.
 - Use `web_search("query", max_results=5)` to find candidate public sources for fresh facts, official pages, documentation, and citations.

@@ -7,6 +7,8 @@ content: |
   Default skills already loaded:
   {default_skills}
 
+  {available_skills}
+
 
   # Workflow protocol
   ## blocks

@@ -56,17 +56,7 @@ class StdioMCPToolClient(AbstractAsyncContextManager["StdioMCPToolClient"]):
 
     @property
     def tool_schemas(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.input_schema or {"type": "object", "properties": {}},
-                },
-            }
-            for tool in self._tools
-        ]
+        return [_tool_schema(tool) for tool in self._tools]
 
     async def __aenter__(self) -> "StdioMCPToolClient":
         parameters = StdioServerParameters(
@@ -172,17 +162,33 @@ def local_mcp_tool_client() -> StdioMCPToolClient:
 
 
 def tool_schemas_from_specs(tools: list[ToolSpec]) -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema or {"type": "object", "properties": {}},
-            },
-        }
-        for tool in tools
-    ]
+    return [_tool_schema(tool) for tool in tools]
+
+
+def _tool_schema(tool: ToolSpec) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": _compact_input_schema(tool.input_schema),
+        },
+    }
+
+
+def _compact_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    if not schema:
+        return {"type": "object", "properties": {}}
+    compacted = _strip_schema_titles(schema)
+    return compacted if isinstance(compacted, dict) else {"type": "object", "properties": {}}
+
+
+def _strip_schema_titles(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _strip_schema_titles(item) for key, item in value.items() if key != "title"}
+    if isinstance(value, list):
+        return [_strip_schema_titles(item) for item in value]
+    return value
 
 
 def _call_result_payload(name: str, result: Any) -> dict[str, Any]:

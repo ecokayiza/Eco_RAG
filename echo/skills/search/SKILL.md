@@ -7,9 +7,11 @@ description: Unified Echo retrieval guidance for choosing and using search tools
 
 Use this skill to choose tools for retrieval.
 
-## Available Tool
+## Available Tools
 
 - Use `database_search("query", top_k=3)` for indexed project files, user-provided documents, stored notes, local knowledge, and questions that should be grounded in the database.
+- Use `web_search("query", max_results=3)` for current public web information, news, product details, documentation, and topics likely to have changed.
+- Use `web_fetch("url")` when a specific page URL is already known and you need the page content directly.
 - You may issue multiple independent retrieval tool calls in the same provider-native response when they can safely run in parallel.
 
 ## Query Discipline

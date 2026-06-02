@@ -667,7 +667,8 @@ async def _stream_decision_response(
             usage.clear()
             usage.update(response.token_usage)
 
-    if _needs_decision_repair(node, content, native_tool_calls):
+    selected_tool_calls = _select_native_tool_calls(native_tool_calls, deps.tool_client.tool_names)
+    if _needs_decision_repair(node, content, selected_tool_calls):
         if force_answer:
             response = await deps.model.generate_response(
                 _answer_repair_messages(workflow_messages),
@@ -675,6 +676,7 @@ async def _stream_decision_response(
             )
             content = _coerce_answer_content(response.content, state)
             native_tool_calls.clear()
+            selected_tool_calls = []
             if response.token_usage:
                 usage.clear()
                 usage.update(response.token_usage)
@@ -686,22 +688,23 @@ async def _stream_decision_response(
             content = (response.content or "").strip()
             native_tool_calls.clear()
             native_tool_calls.extend(response.tool_calls or [])
+            selected_tool_calls = _select_native_tool_calls(native_tool_calls, deps.tool_client.tool_names)
             if response.token_usage:
                 usage.clear()
                 usage.update(response.token_usage)
 
-    if force_answer and (native_tool_calls or TEXTUAL_RETRIEVE_PATTERN.search(content)):
+    if force_answer and (selected_tool_calls or TEXTUAL_RETRIEVE_PATTERN.search(content)):
         response = await deps.model.generate_response(
             _answer_repair_messages(workflow_messages),
             tools=None,
         )
         content = _coerce_answer_content(response.content, state)
         native_tool_calls.clear()
+        selected_tool_calls = []
         if response.token_usage:
             usage.clear()
             usage.update(response.token_usage)
 
-    selected_tool_calls = _select_native_tool_calls(native_tool_calls, deps.tool_client.tool_names)
     if node == WorkflowStep.THINK.value and _needs_decision_repair(node, content, selected_tool_calls):
         response = await deps.model.generate_response(
             _answer_repair_messages(workflow_messages),
@@ -1009,11 +1012,13 @@ def _tool_call_decision_text(content: str, sections: dict[str, str]) -> str | No
 
 
 def _select_native_tool_calls(tool_calls: list[dict[str, Any]], allowed_tool_names: set[str]) -> list[dict[str, Any]]:
-    """Keep complete named native tool calls and drop empty placeholders."""
+    """Keep complete allowed native tool calls and drop empty or disabled placeholders."""
     return [
         dict(item)
         for item in tool_calls
-        if isinstance(item, dict) and str(item.get("name") or "").strip()
+        if isinstance(item, dict)
+        and (name := str(item.get("name") or "").strip())
+        and name in allowed_tool_names
     ]
 
 

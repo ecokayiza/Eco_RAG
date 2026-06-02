@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { api } from "@/lib/api";
+import { defaultMcpEnabledTools, normalizeMcpEnabledTools } from "@/lib/mcp-tools";
 import {
   createEmptyChatModel,
   createEmptyEmbeddingModel,
@@ -48,6 +49,7 @@ const defaultAppSettings: AppSettingsDocument = {
   default_database_backend: "chroma",
   web_search_backend: "auto",
   web_fetch_screenshot_mode: false,
+  mcp_enabled_tools: [...defaultMcpEnabledTools],
 };
 
 export function useSettingsManagement({
@@ -419,6 +421,7 @@ function normalizeAppSettings(settings: Partial<AppSettingsDocument> | null | un
       typeof settings?.web_fetch_screenshot_mode === "boolean"
         ? settings.web_fetch_screenshot_mode
         : defaultAppSettings.web_fetch_screenshot_mode,
+    mcp_enabled_tools: normalizeMcpEnabledTools(settings?.mcp_enabled_tools),
   };
 }
 

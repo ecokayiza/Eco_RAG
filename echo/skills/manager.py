@@ -13,8 +13,10 @@ from ..settings import AppSettings, load_app_settings, save_app_settings
 SKILLS_DIR = Path(__file__).resolve().parent
 SKILL_COMMAND_PATTERN = re.compile(r"^/skill\s+([A-Za-z0-9_-]+)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 FRONTMATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)(.*)\Z", re.DOTALL)
-DEFAULT_SKILLS: Final[tuple[str, ...]] = ("search", "workspace-files")
+DEFAULT_SKILLS: Final[tuple[str, ...]] = ("search",)
+BUILT_IN_SKILLS: Final[tuple[str, ...]] = ("search", "workspace-files")
 _DEFAULT_SKILL_SET: Final[frozenset[str]] = frozenset(DEFAULT_SKILLS)
+_BUILT_IN_SKILL_SET: Final[frozenset[str]] = frozenset(BUILT_IN_SKILLS)
 _VALID_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*[a-z0-9]$|^[a-z0-9]$")
 
 
@@ -50,8 +52,8 @@ def list_available_skills() -> list[str]:
     settings = load_app_settings()
     enabled = _enabled_skill_names(settings)
     discovered = {metadata.name for metadata in list_skill_metadata() if metadata.name in enabled}
-    ordered = [skill for skill in DEFAULT_SKILLS if skill in discovered]
-    extras = sorted(discovered - _DEFAULT_SKILL_SET)
+    ordered = [skill for skill in BUILT_IN_SKILLS if skill in discovered]
+    extras = sorted(discovered - _BUILT_IN_SKILL_SET)
     return [*ordered, *extras]
 
 
@@ -61,8 +63,8 @@ def list_skill_metadata() -> list[SkillMetadata]:
     for path in _skill_paths():
         metadata = _load_skill(path).metadata
         discovered[metadata.name] = metadata
-    ordered = [discovered[name] for name in DEFAULT_SKILLS if name in discovered]
-    extras = [discovered[name] for name in sorted(discovered) if name not in _DEFAULT_SKILL_SET]
+    ordered = [discovered[name] for name in BUILT_IN_SKILLS if name in discovered]
+    extras = [discovered[name] for name in sorted(discovered) if name not in _BUILT_IN_SKILL_SET]
     return [*ordered, *extras]
 
 
@@ -107,7 +109,7 @@ def load_skill_settings_document() -> SkillSettingsDocument:
             content=loaded.content,
             enabled=loaded.metadata.name in enabled,
             default=loaded.metadata.name in defaults,
-            protected=loaded.metadata.name in _DEFAULT_SKILL_SET,
+            protected=loaded.metadata.name in _BUILT_IN_SKILL_SET,
         )
         for loaded in _load_all_skills()
     ]
@@ -129,12 +131,12 @@ def save_skill_settings_document(document: SkillSettingsDocument | dict) -> Skil
         raise ValueError(f"Duplicate skill name(s): {', '.join(duplicate_names)}.")
 
     submitted_by_name = {record.name: record for record in submitted}
-    missing_protected = sorted(skill for skill in _DEFAULT_SKILL_SET if skill in existing and skill not in submitted_by_name)
+    missing_protected = sorted(skill for skill in _BUILT_IN_SKILL_SET if skill in existing and skill not in submitted_by_name)
     if missing_protected:
         raise ValueError(f"Protected skill(s) cannot be deleted: {', '.join(missing_protected)}.")
 
     for name in sorted(set(existing) - set(submitted_by_name)):
-        if name in _DEFAULT_SKILL_SET:
+        if name in _BUILT_IN_SKILL_SET:
             raise ValueError(f"Protected skill '{name}' cannot be deleted.")
         _delete_skill(name)
 
@@ -150,8 +152,10 @@ def save_skill_settings_document(document: SkillSettingsDocument | dict) -> Skil
             chunk_overlap=current_settings.chunk_overlap,
             max_retrieve_rounds=current_settings.max_retrieve_rounds,
             use_marker_pdf_loader=current_settings.use_marker_pdf_loader,
+            default_database_backend=current_settings.default_database_backend,
             web_search_backend=current_settings.web_search_backend,
             web_fetch_screenshot_mode=current_settings.web_fetch_screenshot_mode,
+            mcp_enabled_tools=current_settings.mcp_enabled_tools,
             enabled_skills=enabled,
             default_skills=defaults,
         )
@@ -242,7 +246,7 @@ def _normalize_skill_record(payload: dict) -> SkillRecord:
     if not content:
         raise ValueError(f"Skill '{name}' must include markdown content.")
 
-    existing_protected = name in _DEFAULT_SKILL_SET
+    existing_protected = name in _BUILT_IN_SKILL_SET
     return SkillRecord(
         name=name,
         description=description,
@@ -268,7 +272,7 @@ def _write_skill(name: str, description: str, content: str):
 def _delete_skill(name: str):
     path = _skill_document_path(name)
     skill_dir = path.parent
-    if name in _DEFAULT_SKILL_SET:
+    if name in _BUILT_IN_SKILL_SET:
         raise ValueError(f"Protected skill '{name}' cannot be deleted.")
     if skill_dir.exists():
         shutil.rmtree(skill_dir)
@@ -287,6 +291,6 @@ def _skill_document_path(name: str) -> Path:
 
 def _order_skill_records(records: list[SkillRecord]) -> list[SkillRecord]:
     by_name = {record.name: record for record in records}
-    ordered = [by_name[name] for name in DEFAULT_SKILLS if name in by_name]
-    ordered.extend(by_name[name] for name in sorted(by_name) if name not in _DEFAULT_SKILL_SET)
+    ordered = [by_name[name] for name in BUILT_IN_SKILLS if name in by_name]
+    ordered.extend(by_name[name] for name in sorted(by_name) if name not in _BUILT_IN_SKILL_SET)
     return ordered

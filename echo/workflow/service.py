@@ -90,9 +90,10 @@ class WorkflowService:
     def _deps(self, tool_client: ToolClient) -> WorkflowDependencies:
         """Build one dependency bundle for a workflow run."""
         settings = load_app_settings()
+        filtered_tool_client = FilteredToolClient(tool_client, settings.mcp_enabled_tools)
         return WorkflowDependencies(
             model=self.model_factory(),
-            tool_client=tool_client,
+            tool_client=filtered_tool_client,
             max_retrieve_rounds=settings.max_retrieve_rounds,
         )
 
@@ -100,12 +101,14 @@ class WorkflowService:
         """Ensure the workflow transcript starts with one rendered system prompt."""
         base_context = [dict(item) for item in (context or []) if isinstance(item, dict)]
         if not any(str(item.get("role", "")).strip() == "system" for item in base_context):
+            settings = load_app_settings()
             base_context.insert(
                 0,
                 {
                     "role": "system",
                     "content": default_system_prompt(
                         available_skills=list_available_skills(),
+                        allow_load_skill="load_skill" in settings.mcp_enabled_tools,
                     ),
                 },
             )
@@ -300,6 +303,32 @@ def _sum_token_usage(records: list[dict[str, Any]]) -> dict[str, Any] | None:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 usage[key] = usage.get(key, 0) + value
     return usage or None
+
+
+class FilteredToolClient:
+    """Expose only the MCP tools configured for this workflow run."""
+
+    def __init__(self, tool_client: ToolClient, enabled_tool_names: list[str] | tuple[str, ...]):
+        self._tool_client = tool_client
+        self._enabled_tool_names = set(enabled_tool_names)
+
+    @property
+    def tool_names(self) -> set[str]:
+        return self._tool_client.tool_names & self._enabled_tool_names
+
+    @property
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        allowed = self.tool_names
+        return [
+            schema
+            for schema in self._tool_client.tool_schemas
+            if str(schema.get("function", {}).get("name") or "").strip() in allowed
+        ]
+
+    async def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name not in self.tool_names:
+            raise ValueError(f"Workflow tool '{name}' is not enabled.")
+        return await self._tool_client.call_tool(name, args)
 
 
 def _route_detail(next_step: Any) -> str:

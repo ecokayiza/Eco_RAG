@@ -26,7 +26,7 @@ from echo.chat.registry import (
     normalize_model_settings_document,
     save_model_settings_document,
 )
-from echo.settings import Config
+from echo.settings import DEFAULT_MCP_ENABLED_TOOLS, Config
 from mcp_server.rag import (
     Assembler,
     ChunkerFactory,
@@ -228,6 +228,7 @@ class AppSettingsRequest(BaseModel):
     default_database_backend: str = "chroma"
     web_search_backend: str = "auto"
     web_fetch_screenshot_mode: bool = False
+    mcp_enabled_tools: list[str] = Field(default_factory=lambda: list(DEFAULT_MCP_ENABLED_TOOLS))
 
     def to_settings(self) -> AppSettings:
         return AppSettings(**self.model_dump())
@@ -242,6 +243,7 @@ class AppSettingsRequest(BaseModel):
             default_database_backend=settings.default_database_backend,
             web_search_backend=settings.web_search_backend,
             web_fetch_screenshot_mode=settings.web_fetch_screenshot_mode,
+            mcp_enabled_tools=settings.mcp_enabled_tools,
         )
 
 
@@ -393,6 +395,7 @@ def create_app(chat_service: ChatService | None = None):
             default_database_backend=payload.default_database_backend,
             web_search_backend=payload.web_search_backend,
             web_fetch_screenshot_mode=payload.web_fetch_screenshot_mode,
+            mcp_enabled_tools=payload.mcp_enabled_tools,
             enabled_skills=current.enabled_skills,
             default_skills=current.default_skills,
         )

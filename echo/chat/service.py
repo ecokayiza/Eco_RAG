@@ -7,6 +7,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 from uuid import uuid4
 
+from ..settings import load_app_settings
 from ..skills import list_available_skills
 from mcp_server.client import ToolClient
 from ..workflow.prompts import default_system_prompt
@@ -96,6 +97,9 @@ class ChatService:
     def delete_session(self, session_id: str):
         sessions, _ = self._chat(session_id)
         sessions.delete()
+        workflow = self._workflow()
+        if hasattr(workflow, "clear_draft"):
+            workflow.clear_draft(session_id)
 
     def get_session_state(self, session_id: str) -> SessionState:
         sessions, messages = self._chat(session_id)
@@ -441,8 +445,10 @@ class ChatService:
 
     def default_system_prompt(self) -> str:
         """Render the default session-level system prompt."""
+        settings = load_app_settings()
         return default_system_prompt(
             available_skills=list_available_skills(),
+            allow_load_skill="load_skill" in settings.mcp_enabled_tools,
         )
 
     @staticmethod

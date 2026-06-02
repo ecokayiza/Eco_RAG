@@ -186,6 +186,17 @@ export interface ModelApiTestResponse {
   message: string;
 }
 
+export type McpToolName =
+  | "load_skill"
+  | "date"
+  | "database_search"
+  | "web_search"
+  | "web_fetch"
+  | "workspace_list_files"
+  | "workspace_read_file"
+  | "workspace_write_file"
+  | "workspace_edit_file";
+
 export interface AppSettingsDocument {
   chunk_size: number;
   chunk_overlap: number;
@@ -194,6 +205,7 @@ export interface AppSettingsDocument {
   default_database_backend: "chroma" | "faiss";
   web_search_backend: "auto" | "duckduckgo" | "baidu";
   web_fetch_screenshot_mode: boolean;
+  mcp_enabled_tools: McpToolName[];
 }
 
 export interface SkillRecord {

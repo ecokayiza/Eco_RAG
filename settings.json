@@ -6,6 +6,12 @@
   "default_database_backend": "chroma",
   "web_search_backend": "auto",
   "web_fetch_screenshot_mode": false,
+  "mcp_enabled_tools": [
+    "date",
+    "database_search",
+    "web_search",
+    "web_fetch"
+  ],
   "enabled_skills": [
     "search"
   ],

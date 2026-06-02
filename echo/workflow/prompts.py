@@ -12,11 +12,14 @@ PROMPT_DIR = Path(__file__).with_name("prompt_templates")
 def default_system_prompt(
     *,
     available_skills: list[str] | tuple[str, ...] = (),
+    allow_load_skill: bool = True,
 ) -> str:
     """Render the shared session-level system prompt."""
     resolved_available_skills = list(available_skills) if available_skills else list_available_skills()
     default_skills = list_default_skills()
-    loadable_skills = [skill for skill in resolved_available_skills if skill not in set(default_skills)]
+    loadable_skills = [
+        skill for skill in resolved_available_skills if allow_load_skill and skill not in set(default_skills)
+    ]
     return _template("system").format(
         default_skills=_default_skill_documents(default_skills),
         available_skills=_available_skills_document(loadable_skills, default_skills=default_skills),

@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
   Cog6ToothIcon,
+  CommandLineIcon,
   CpuChipIcon,
   PuzzlePieceIcon,
   ServerStackIcon,
@@ -22,6 +23,7 @@ import type {
 } from "@/types/chat";
 
 import { ModelSettingsSection } from "./ModelSettingsSection";
+import { McpSettingsSection } from "./McpSettingsSection";
 import { RuntimeSettingsSection } from "./RuntimeSettingsSection";
 import { SkillSettingsSection } from "./SkillSettingsSection";
 import {
@@ -33,7 +35,7 @@ import {
   resolveNextActiveName,
 } from "./settings-utils";
 
-type SettingsSection = "chat" | "embedding" | "runtime" | "skills";
+type SettingsSection = "chat" | "embedding" | "runtime" | "mcp" | "skills";
 type StatusTone = "neutral" | "success" | "error";
 
 interface ManagementSettingsPageProps {
@@ -69,6 +71,7 @@ const sections: Array<{ id: SettingsSection; label: string; meta: string; icon: 
   { id: "chat", label: "Chat Models", meta: "Generation providers", icon: ServerStackIcon },
   { id: "embedding", label: "Embedding Models", meta: "Indexing providers", icon: CpuChipIcon },
   { id: "runtime", label: "Runtime", meta: "Chunking and retrieval", icon: Cog6ToothIcon },
+  { id: "mcp", label: "MCP", meta: "Tool schemas", icon: CommandLineIcon },
   { id: "skills", label: "Skills", meta: "Workflow capabilities", icon: PuzzlePieceIcon },
 ];
 
@@ -124,9 +127,15 @@ export function ManagementSettingsPage({
       chat: modelSettings.chat_models.length,
       embedding: modelSettings.embedding_models.length,
       runtime: "Settings",
+      mcp: appSettings.mcp_enabled_tools.length,
       skills: skillSettings.skills.length,
     }),
-    [modelSettings.chat_models.length, modelSettings.embedding_models.length, skillSettings.skills.length]
+    [
+      appSettings.mcp_enabled_tools.length,
+      modelSettings.chat_models.length,
+      modelSettings.embedding_models.length,
+      skillSettings.skills.length,
+    ]
   );
 
   const validationIssues = useMemo(
@@ -339,6 +348,10 @@ export function ManagementSettingsPage({
 
         {section === "runtime" ? (
           <RuntimeSettingsSection busy={busy} onUpdate={onUpdateAppSetting} settings={appSettings} />
+        ) : null}
+
+        {section === "mcp" ? (
+          <McpSettingsSection busy={busy} onUpdate={onUpdateAppSetting} settings={appSettings} />
         ) : null}
 
         {section === "skills" ? (
