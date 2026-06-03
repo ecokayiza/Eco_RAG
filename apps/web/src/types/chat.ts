@@ -161,8 +161,7 @@ export interface ChatModelConfig {
   api_key: string | null;
   base_url: string | null;
   wire_api: "chat_completions" | "responses";
-  temperature: number;
-  top_p: number | null;
+  temperature: number | null;
   custom_request_params: JsonObject | null;
 }
 

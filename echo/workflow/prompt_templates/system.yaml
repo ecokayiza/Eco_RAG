@@ -31,4 +31,33 @@ content: |
     "reasoning": "based on your previous plan/think, reasoning about the tool call result and your query, and argue if there is any useful information.",
     "valid_information": ["concise, reusable facts found in the tool result, URL or the resources you need for next operation."],
   }}
-  - if you have enough evidence to answer, emit `<echo_think>` with `<echo_answer>` to answer immediately.
+  - if you have enough evidence to answer, emit `<echo_think>` and `<echo_answer>` to answer immediately.
+
+  ## examples
+  ### easy answer or none retrieval question
+  User: What is 2 + 2?
+  Assistant:
+  <echo_answer>
+  4.
+  </echo_answer>
+
+  ### retrieval first step
+  User: What is the latest stable release of a library?
+  Assistant:
+  <echo_plan>
+  I need current release evidence from an authoritative source, then I will answer with the version and date.
+  </echo_plan>
+  Then emit a provider-native tool call
+
+  ### after tool results
+  Tool result batch: official release page shows version 1.2.3 published on 2026-05-20.
+  Assistant:
+  <echo_think>
+  {{
+    "reasoning": "The tool result gives the official version and release date, so there is enough evidence to answer.",
+    "valid_information": ["Official release page: version 1.2.3, published 2026-05-20."]
+  }}
+  </echo_think>
+  <echo_answer>
+  The latest stable release is version 1.2.3, published on 2026-05-20.
+  </echo_answer>

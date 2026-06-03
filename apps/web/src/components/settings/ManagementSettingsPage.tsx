@@ -29,7 +29,6 @@ import { SkillSettingsSection } from "./SkillSettingsSection";
 import {
   clampIndex,
   getDuplicateNames,
-  numberValue,
   optionalNumberValue,
   optionalPositiveIntegerValue,
   resolveNextActiveName,
@@ -261,24 +260,12 @@ export function ManagementSettingsPage({
                     disabled={fieldBusy}
                     id="chat-model-temperature"
                     onChange={(event) => {
-                      onUpdate(index, "temperature", numberValue(event.target.value, 1));
-                    }}
-                    step="0.1"
-                    type="number"
-                    value={String(model.temperature)}
-                  />
-                </Field>
-                <Field htmlFor="chat-model-top-p" label="Top P">
-                  <input
-                    disabled={fieldBusy}
-                    id="chat-model-top-p"
-                    onChange={(event) => {
-                      onUpdate(index, "top_p", optionalNumberValue(event.target.value));
+                      onUpdate(index, "temperature", optionalNumberValue(event.target.value));
                     }}
                     placeholder="Provider default"
                     step="0.1"
                     type="number"
-                    value={model.top_p == null ? "" : String(model.top_p)}
+                    value={model.temperature == null ? "" : String(model.temperature)}
                   />
                 </Field>
                 <JsonObjectField

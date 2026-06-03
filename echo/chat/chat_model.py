@@ -526,8 +526,7 @@ class BaseChatModel(ABC):
         base_url: str | None = None,
         wire_api: str = WIRE_API_CHAT_COMPLETIONS,
         model: str | None = None,
-        temperature: float = 1.0,
-        top_p: float | None = None,
+        temperature: float | None = None,
         custom_request_params: Dict[str, Any] | None = None,
     ):
         """Create the shared provider client."""
@@ -540,7 +539,6 @@ class BaseChatModel(ABC):
         self.wire_api = wire_api if wire_api == WIRE_API_RESPONSES else WIRE_API_CHAT_COMPLETIONS
         self.model = model
         self.temperature = temperature
-        self.top_p = top_p
         self.custom_request_params = dict(custom_request_params) if isinstance(custom_request_params, dict) else None
 
     @abstractmethod
@@ -582,17 +580,16 @@ class OpenAIChatModel(BaseChatModel):
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
             "stop": stop,
             **kwargs,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         if tools:
             payload["tools"] = tools
         if stream:
             payload["stream"] = True
             payload["stream_options"] = {"include_usage": True}
-        if include_optional and self.top_p is not None:
-            payload["top_p"] = self.top_p
         if include_optional:
             existing_extra_body = payload.get("extra_body")
             extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
@@ -616,9 +613,10 @@ class OpenAIChatModel(BaseChatModel):
         payload: Dict[str, Any] = {
             "model": self.model,
             "input": _responses_input(messages),
-            "temperature": self.temperature,
             **kwargs,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
         instructions = _responses_instructions(messages)
         if instructions and "instructions" not in payload:
             payload["instructions"] = instructions
@@ -627,9 +625,6 @@ class OpenAIChatModel(BaseChatModel):
             payload["tools"] = converted_tools
         if stream:
             payload["stream"] = True
-        if include_optional and self.top_p is not None:
-            payload["top_p"] = self.top_p
-
         extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
         if include_optional:
             extra_body.update(_with_response_param_aliases(self.custom_request_params))
@@ -646,7 +641,7 @@ class OpenAIChatModel(BaseChatModel):
         stream: bool = False,
         **kwargs,
     ):
-        use_fallback = self.top_p is not None or bool(self.custom_request_params)
+        use_fallback = bool(self.custom_request_params)
         attempts = [(True, tools)]
         if use_fallback:
             attempts.append((False, tools))
@@ -687,7 +682,7 @@ class OpenAIChatModel(BaseChatModel):
                 "stop": stop,
             }
 
-        use_fallback = self.top_p is not None or bool(self.custom_request_params)
+        use_fallback = bool(self.custom_request_params)
         attempts = [(True, tools)]
         if use_fallback:
             attempts.append((False, tools))

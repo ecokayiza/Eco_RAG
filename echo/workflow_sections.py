@@ -4,7 +4,7 @@ import re
 from typing import Pattern
 
 WORKFLOW_SECTION_NAMES = {"plan", "think", "answer", "tool"}
-TAG_PATTERN = re.compile(r"</?echo_(plan|think|answer|tool)>", re.IGNORECASE)
+TAG_PATTERN = re.compile(r"</?\s*([a-z_]+)\s*>", re.IGNORECASE)
 
 
 def parse_workflow_sections(content: str | None, *, allow_unclosed: bool = False) -> dict[str, str]:
@@ -23,8 +23,10 @@ def workflow_section_entries(content: str | None, *, allow_unclosed: bool = Fals
     for match in TAG_PATTERN.finditer(text):
         if _inside_ranges(match.start(), code_ranges):
             continue
-        tag_name = match.group(1).lower()
-        is_close = text[match.start() + 1] == "/"
+        tag_name = _canonical_workflow_section_name(match.group(1))
+        if tag_name is None:
+            continue
+        is_close = match.group(0).startswith("</")
         if current is None:
             if not is_close:
                 current = tag_name
@@ -36,8 +38,7 @@ def workflow_section_entries(content: str | None, *, allow_unclosed: bool = Fals
             continue
         if not is_close:
             nested_content = text[block_start:match.start()].strip()
-            if nested_content:
-                entries.append((current, nested_content))
+            entries.append((current, nested_content))
             current = tag_name
             block_start = match.end()
 
@@ -45,6 +46,14 @@ def workflow_section_entries(content: str | None, *, allow_unclosed: bool = Fals
         entries.append((current, text[block_start:].strip()))
 
     return entries
+
+
+def _canonical_workflow_section_name(name: str) -> str | None:
+    cleaned = name.lower()
+    if not cleaned.startswith("echo_"):
+        return None
+    canonical = cleaned[len("echo_") :]
+    return canonical if canonical in WORKFLOW_SECTION_NAMES else None
 
 
 def contains_pattern_outside_markdown_code(content: str | None, pattern: Pattern[str]) -> bool:

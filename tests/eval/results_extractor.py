@@ -501,7 +501,7 @@ def split_workflow_training_records(messages: list[dict[str, Any]]) -> list[dict
 
         context.append(_copy_message(payload))
         if payload.get("role") == "assistant" and _has_think_block(payload.get("content")):
-            _redact_previous_tool_result(context, before=len(context) - 1)
+            _redact_previous_tool_results(context, before=len(context) - 1)
 
     return examples
 
@@ -583,14 +583,28 @@ def _has_think_block(content: Any) -> bool:
     return bool(str(block or "").strip())
 
 
-def _redact_previous_tool_result(messages: list[dict[str, Any]], *, before: int) -> None:
+def _redact_previous_tool_results(messages: list[dict[str, Any]], *, before: int) -> None:
     for index in range(before - 1, -1, -1):
+        if _is_visual_memory_item(messages[index]):
+            continue
         role = str(messages[index].get("role") or "").strip()
         if role == "tool":
             messages[index]["content"] = _redacted_tool_content(messages[index].get("content"))
-            return
+            continue
         if role == "assistant":
             return
+        return
+
+
+def _is_visual_memory_item(message: dict[str, Any]) -> bool:
+    content = message.get("content")
+    if str(message.get("role") or "").strip() != "user" or not isinstance(content, list) or not content:
+        return False
+    allowed_types = {"text", "image_url"}
+    return (
+        any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
+        and all(isinstance(part, dict) and part.get("type") in allowed_types for part in content)
+    )
 
 
 def _redacted_tool_content(content: Any) -> str:

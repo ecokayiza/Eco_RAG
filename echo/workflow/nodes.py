@@ -696,6 +696,7 @@ async def _stream_decision_response(
         max_parallel_tool_calls=deps.max_parallel_tool_calls,
     )
     if _needs_decision_repair(node, content, selected_tool_calls):
+        pre_repair_content = content.strip()
         if force_answer:
             response = await deps.model.generate_response(
                 _answer_repair_messages(workflow_messages),
@@ -712,7 +713,7 @@ async def _stream_decision_response(
                 _decision_repair_messages(workflow_messages, node),
                 tools=decision_tools,
             )
-            content = (response.content or "").strip()
+            repair_content = (response.content or "").strip()
             native_tool_calls.clear()
             native_tool_calls.extend(response.tool_calls or [])
             selected_tool_calls = _select_native_tool_calls(
@@ -720,6 +721,7 @@ async def _stream_decision_response(
                 deps.tool_client.tool_names,
                 max_parallel_tool_calls=deps.max_parallel_tool_calls,
             )
+            content = _repair_decision_content(node, pre_repair_content, repair_content, selected_tool_calls)
             if response.token_usage:
                 usage.clear()
                 usage.update(response.token_usage)
@@ -1037,6 +1039,24 @@ def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dic
 
     label = "Native tool call" if len(names) == 1 else "Native tool calls"
     return render_workflow_section(node, f"{label}: {', '.join(names)}")
+
+
+def _repair_decision_content(
+    node: str,
+    pre_repair_content: str,
+    repair_content: str,
+    selected_tool_calls: list[dict[str, Any]],
+) -> str:
+    """Keep the streamed decision text when repair only supplies native tool calls."""
+    if not selected_tool_calls or not pre_repair_content:
+        return repair_content
+
+    repair_sections = _sections(repair_content, allow_unclosed=True)
+    if _has_action_block(repair_sections, "answer") or _optional_text(repair_sections.get(node)):
+        return repair_content
+
+    pre_repair_sections = _sections(pre_repair_content, allow_unclosed=True)
+    return pre_repair_content if _optional_text(pre_repair_sections.get(node)) else repair_content
 
 
 def _tool_call_decision_text(content: str, sections: dict[str, str]) -> str | None:

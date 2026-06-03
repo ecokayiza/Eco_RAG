@@ -156,8 +156,7 @@ class ChatModelSettingsRequest(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     wire_api: str = "chat_completions"
-    temperature: float = 1.0
-    top_p: float | None = None
+    temperature: float | None = None
     custom_request_params: dict[str, Any] | None = None
 
     def to_settings(self) -> ChatModelSettings:

@@ -20,8 +20,7 @@ class ChatModelSettings:
     api_key: str | None = None
     base_url: str | None = None
     wire_api: str = WIRE_API_CHAT_COMPLETIONS
-    temperature: float = 1.0
-    top_p: float | None = None
+    temperature: float | None = None
     custom_request_params: dict | None = None
 
 
@@ -106,8 +105,7 @@ def normalize_chat_model_settings(settings: ChatModelSettings | dict | None = No
     api_key = _trim_or_none(payload.get("api_key"))
     base_url = _trim_or_none(payload.get("base_url"))
     wire_api = _wire_api_or_default(payload.get("wire_api"))
-    temperature = _number_or_default(payload.get("temperature"), 1.0)
-    top_p = _number_or_default(payload.get("top_p"), None)
+    temperature = _number_or_default(payload.get("temperature"), None)
     custom_request_params = _dict_or_none(payload.get("custom_request_params"))
     return ChatModelSettings(
         name=name,
@@ -115,8 +113,7 @@ def normalize_chat_model_settings(settings: ChatModelSettings | dict | None = No
         api_key=api_key,
         base_url=base_url,
         wire_api=wire_api,
-        temperature=temperature if temperature is not None else 1.0,
-        top_p=top_p,
+        temperature=temperature,
         custom_request_params=custom_request_params,
     )
 
@@ -155,7 +152,7 @@ def default_model_settings_document() -> ModelSettingsDocument:
 def _is_legacy_chat_settings(payload: dict) -> bool:
     return "chat_models" not in payload and any(
         key in payload
-        for key in ("model", "api_key", "base_url", "wire_api", "temperature", "top_p", "custom_request_params")
+        for key in ("model", "api_key", "base_url", "wire_api", "temperature", "custom_request_params")
     )
 
 
@@ -319,7 +316,6 @@ def _build_openai_chat_model(resolved: ChatModelSettings) -> BaseChatModel:
         wire_api=resolved.wire_api,
         model=resolved.model,
         temperature=resolved.temperature,
-        top_p=resolved.top_p,
         custom_request_params=resolved.custom_request_params,
     )
 

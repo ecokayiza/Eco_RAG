@@ -44,11 +44,6 @@ export function getDuplicateNames<T extends { name: string }>(items: T[]) {
   return [...duplicates];
 }
 
-export function numberValue(value: string, fallback: number) {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 export function optionalNumberValue(value: string) {
   if (!value.trim()) {
     return null;

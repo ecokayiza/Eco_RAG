@@ -156,8 +156,7 @@ Create or edit `models.json` in the repository root. The file is intentionally i
       "api_key": "your-api-key",
       "base_url": "https://your-provider.example/v1",
       "wire_api": "chat_completions",
-      "temperature": 1.0,
-      "top_p": null,
+      "temperature": null,
       "custom_request_params": null
     }
   ],
