@@ -908,6 +908,7 @@ function hasWorkflowBlock(content: string, target: string) {
 function parseWorkflowSections(content: string): WorkflowSections {
   const sections: Record<string, string[]> = {};
   const present = new Set<string>();
+  const codeRanges = markdownCodeRanges(content);
   let current: string | null = null;
   let currentStart = 0;
 
@@ -921,6 +922,9 @@ function parseWorkflowSections(content: string): WorkflowSections {
   for (const match of content.matchAll(/<\/?\s*([a-z_]+)\s*>/gi)) {
     const rawTag = match[0];
     const index = match.index ?? 0;
+    if (insideRanges(index, codeRanges)) {
+      continue;
+    }
     const name = canonicalWorkflowSectionName(match[1]);
     if (!name) {
       continue;
@@ -960,7 +964,11 @@ function hasWorkflowDecisionBlock(content: string) {
 }
 
 function firstWorkflowDecisionBlockName(content: string) {
+  const codeRanges = markdownCodeRanges(content);
   for (const match of content.matchAll(/<\s*([a-z_]+)\s*>/gi)) {
+    if (insideRanges(match.index ?? 0, codeRanges)) {
+      continue;
+    }
     const name = canonicalWorkflowSectionName(match[1]);
     if (name === "plan" || name === "think") {
       return name;
@@ -978,6 +986,115 @@ function canonicalWorkflowSectionName(name: string) {
   if (cleaned.startsWith("echo_")) {
     const canonical = cleaned.slice("echo_".length);
     return ["plan", "think", "answer", "tool"].includes(canonical) ? canonical : null;
+  }
+  return null;
+}
+
+function markdownCodeRanges(content: string) {
+  const fenced = fencedCodeRanges(content);
+  return mergeRanges([...fenced, ...inlineCodeRanges(content, fenced)]);
+}
+
+function fencedCodeRanges(content: string) {
+  const ranges: Array<[number, number]> = [];
+  let index = 0;
+  while (index < content.length) {
+    const lineEnd = content.indexOf("\n", index);
+    const end = lineEnd < 0 ? content.length : lineEnd;
+    const nextIndex = lineEnd < 0 ? content.length : lineEnd + 1;
+    const line = content.slice(index, end);
+    const opener = /^[ \t]{0,3}(```+)/.exec(line);
+    if (!opener) {
+      index = nextIndex;
+      continue;
+    }
+
+    const markerLength = opener[1].length;
+    let closeIndex = nextIndex;
+    let rangeEnd = content.length;
+    const closer = new RegExp(`^[ \\t]{0,3}\`{${markerLength},}`);
+    while (closeIndex < content.length) {
+      const closeLineEnd = content.indexOf("\n", closeIndex);
+      const closeEnd = closeLineEnd < 0 ? content.length : closeLineEnd;
+      const closeNextIndex = closeLineEnd < 0 ? content.length : closeLineEnd + 1;
+      if (closer.test(content.slice(closeIndex, closeEnd))) {
+        rangeEnd = closeNextIndex;
+        break;
+      }
+      closeIndex = closeNextIndex;
+    }
+
+    ranges.push([index, rangeEnd]);
+    index = rangeEnd;
+  }
+  return ranges;
+}
+
+function inlineCodeRanges(content: string, excludedRanges: Array<[number, number]>) {
+  const ranges: Array<[number, number]> = [];
+  let index = 0;
+  while (index < content.length) {
+    const excludedEnd = containingRangeEnd(index, excludedRanges);
+    if (excludedEnd != null) {
+      index = excludedEnd;
+      continue;
+    }
+    if (content[index] !== "`") {
+      index += 1;
+      continue;
+    }
+
+    let markerEnd = index + 1;
+    while (markerEnd < content.length && content[markerEnd] === "`") {
+      markerEnd += 1;
+    }
+    const marker = content.slice(index, markerEnd);
+    let searchIndex = markerEnd;
+    while (true) {
+      const closeIndex = content.indexOf(marker, searchIndex);
+      if (closeIndex < 0) {
+        index = markerEnd;
+        break;
+      }
+      const closeExcludedEnd = containingRangeEnd(closeIndex, excludedRanges);
+      if (closeExcludedEnd != null) {
+        searchIndex = closeExcludedEnd;
+        continue;
+      }
+      const closeEnd = closeIndex + marker.length;
+      ranges.push([index, closeEnd]);
+      index = closeEnd;
+      break;
+    }
+  }
+  return ranges;
+}
+
+function mergeRanges(ranges: Array<[number, number]>) {
+  const merged: Array<[number, number]> = [];
+  for (const [start, end] of [...ranges].sort(([left], [right]) => left - right)) {
+    const previous = merged.at(-1);
+    if (!previous || start > previous[1]) {
+      merged.push([start, end]);
+    } else {
+      previous[1] = Math.max(previous[1], end);
+    }
+  }
+  return merged;
+}
+
+function insideRanges(index: number, ranges: Array<[number, number]>) {
+  return containingRangeEnd(index, ranges) != null;
+}
+
+function containingRangeEnd(index: number, ranges: Array<[number, number]>) {
+  for (const [start, end] of ranges) {
+    if (index < start) {
+      return null;
+    }
+    if (start <= index && index < end) {
+      return end;
+    }
   }
   return null;
 }

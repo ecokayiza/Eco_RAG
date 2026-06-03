@@ -15,6 +15,7 @@ from echo.settings import Config
 from ..chat.chat_model import BaseChatModel, Response
 from mcp_server.client import ToolClient
 from ..workflow_sections import (
+    contains_pattern_outside_markdown_code,
     parse_workflow_sections,
     render_workflow_section,
     render_workflow_sections,
@@ -428,7 +429,7 @@ def _decision_from_response(
     """Parse one native-tool-only decision-node response."""
     try:
         content = (response.content or "").strip()
-        if TEXTUAL_RETRIEVE_PATTERN.search(content):
+        if _contains_textual_retrieve(content):
             raise ValueError("Textual retrieve blocks are not supported. Use a provider-native tool call.")
 
         sections = _sections(content, allow_unclosed=True)
@@ -723,7 +724,7 @@ async def _stream_decision_response(
                 usage.clear()
                 usage.update(response.token_usage)
 
-    if force_answer and (selected_tool_calls or TEXTUAL_RETRIEVE_PATTERN.search(content)):
+    if force_answer and (selected_tool_calls or _contains_textual_retrieve(content)):
         response = await deps.model.generate_response(
             _answer_repair_messages(workflow_messages),
             tools=None,
@@ -876,7 +877,7 @@ def _needs_decision_repair(node: str, content: str, tool_calls: list[dict[str, A
     sections = _sections(text, allow_unclosed=True)
     if _has_action_block(sections, "answer"):
         return False
-    if TEXTUAL_RETRIEVE_PATTERN.search(text):
+    if _contains_textual_retrieve(text):
         return False
 
     entries = workflow_section_entries(text, allow_unclosed=True)
@@ -892,8 +893,8 @@ def _is_plain_text_answer(text: str) -> bool:
     return bool(
         stripped
         and not workflow_section_entries(stripped, allow_unclosed=True)
-        and not TEXTUAL_RETRIEVE_PATTERN.search(stripped)
-        and not WORKFLOW_LIKE_TAG_PATTERN.search(stripped)
+        and not _contains_textual_retrieve(stripped)
+        and not _contains_workflow_like_tag(stripped)
         and not TOOL_INTENT_PATTERN.search(stripped)
     )
 
@@ -970,7 +971,7 @@ def _coerce_answer_content(content: str | None, state: WorkflowState) -> str:
     entries = workflow_section_entries(text, allow_unclosed=True)
     if text and _has_action_block(_sections(text, allow_unclosed=True), "answer"):
         return text
-    if text and not entries and not TEXTUAL_RETRIEVE_PATTERN.search(text):
+    if text and not entries and not _contains_textual_retrieve(text):
         return render_workflow_section("answer", text)
 
     fallback = _fallback_answer_from_latest_tool(state)
@@ -1044,6 +1045,14 @@ def _tool_call_decision_text(content: str, sections: dict[str, str]) -> str | No
         return None
     text = re.sub(r"</?\s*(?:echo_)?(?:plan|think|answer|tool)\s*>", "", content, flags=re.IGNORECASE).strip()
     return _optional_text(text)
+
+
+def _contains_textual_retrieve(content: str | None) -> bool:
+    return contains_pattern_outside_markdown_code(content, TEXTUAL_RETRIEVE_PATTERN)
+
+
+def _contains_workflow_like_tag(content: str | None) -> bool:
+    return contains_pattern_outside_markdown_code(content, WORKFLOW_LIKE_TAG_PATTERN)
 
 
 def _parallel_tool_call_limit(value: int) -> int:
