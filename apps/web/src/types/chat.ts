@@ -201,6 +201,8 @@ export interface AppSettingsDocument {
   chunk_size: number;
   chunk_overlap: number;
   max_retrieve_rounds: number;
+  max_database_search_top_k: number;
+  max_parallel_tool_calls: number;
   use_marker_pdf_loader: boolean;
   default_database_backend: "chroma" | "faiss";
   web_search_backend: "auto" | "duckduckgo" | "baidu";

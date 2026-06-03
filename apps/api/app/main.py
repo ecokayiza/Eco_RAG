@@ -224,6 +224,8 @@ class AppSettingsRequest(BaseModel):
     chunk_size: int = Field(default=Config.CHUNK_SIZE, ge=1)
     chunk_overlap: int = Field(default=Config.CHUNK_OVERLAP, ge=0)
     max_retrieve_rounds: int = Field(default=10, ge=1)
+    max_database_search_top_k: int = Field(default=5, ge=1)
+    max_parallel_tool_calls: int = Field(default=3, ge=1)
     use_marker_pdf_loader: bool = True
     default_database_backend: str = "chroma"
     web_search_backend: str = "auto"
@@ -239,6 +241,8 @@ class AppSettingsRequest(BaseModel):
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
             max_retrieve_rounds=settings.max_retrieve_rounds,
+            max_database_search_top_k=settings.max_database_search_top_k,
+            max_parallel_tool_calls=settings.max_parallel_tool_calls,
             use_marker_pdf_loader=settings.use_marker_pdf_loader,
             default_database_backend=settings.default_database_backend,
             web_search_backend=settings.web_search_backend,
@@ -391,6 +395,8 @@ def create_app(chat_service: ChatService | None = None):
             chunk_size=payload.chunk_size,
             chunk_overlap=payload.chunk_overlap,
             max_retrieve_rounds=payload.max_retrieve_rounds,
+            max_database_search_top_k=payload.max_database_search_top_k,
+            max_parallel_tool_calls=payload.max_parallel_tool_calls,
             use_marker_pdf_loader=payload.use_marker_pdf_loader,
             default_database_backend=payload.default_database_backend,
             web_search_backend=payload.web_search_backend,

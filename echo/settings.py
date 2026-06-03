@@ -62,6 +62,8 @@ class AppSettings:
     chunk_size: int = Config.CHUNK_SIZE
     chunk_overlap: int = Config.CHUNK_OVERLAP
     max_retrieve_rounds: int = 10
+    max_database_search_top_k: int = 5
+    max_parallel_tool_calls: int = 3
     use_marker_pdf_loader: bool = True
     default_database_backend: str = "chroma"
     web_search_backend: str = "auto"
@@ -80,6 +82,8 @@ def normalize_app_settings(payload: dict | None = None) -> AppSettings:
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         max_retrieve_rounds=_positive_int(data.get("max_retrieve_rounds"), 10),
+        max_database_search_top_k=_positive_int(data.get("max_database_search_top_k"), 5),
+        max_parallel_tool_calls=_positive_int(data.get("max_parallel_tool_calls"), 3),
         use_marker_pdf_loader=_bool(data.get("use_marker_pdf_loader"), True),
         default_database_backend=_database_backend(data.get("default_database_backend")),
         web_search_backend=_web_search_backend(data.get("web_search_backend")),

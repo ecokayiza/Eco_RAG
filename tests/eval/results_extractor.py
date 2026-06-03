@@ -4,7 +4,6 @@ import argparse
 import json
 import asyncio
 from collections import Counter
-from copy import deepcopy
 import hashlib
 import re
 import sys
@@ -18,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from echo.settings import load_app_settings
 from echo.workflow_sections import parse_workflow_sections, render_workflow_section
 
 DEFAULT_RESULTS_PATH = Path(__file__).with_name("results.jsonl")
@@ -27,33 +27,37 @@ DEFAULT_PROMPT_PATH = Path(__file__).with_name("prompts") / "answer-check.yaml"
 DEFAULT_EVAL_PROMPT_PATH = Path(__file__).with_name("prompts") / "answer-refine.yaml"
 DEFAULT_SESSION_DIR = Path(__file__).resolve().parents[2] / "memory" / "chat_sessions"
 
-DEFAULT_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "database_search",
-            "description": "Retrieve evidence from the local wiki18_100w corpus.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Focused retrieval query."},
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of passages to retrieve, capped at 5.",
-                        "minimum": 1,
-                        "maximum": 5,
-                    },
-                },
-                "required": ["query", "top_k"],
-            },
-        },
-    }
-]
 DEFAULT_PARALLEL_TOOL_CALLS = True
 
 _ARTICLE_RE = re.compile(r"\b(a|an|the)\b", re.IGNORECASE)
 _NON_WORD_RE = re.compile(r"[^0-9a-zA-Z]+")
 _HIDDEN_TOOL_RESULT = "[information hidden]"
+
+
+def default_tools() -> list[dict[str, Any]]:
+    max_top_k = load_app_settings().max_database_search_top_k
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "database_search",
+                "description": "Retrieve evidence from the local wiki18_100w corpus.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Focused retrieval query."},
+                        "top_k": {
+                            "type": "integer",
+                            "description": f"Number of passages to retrieve, capped at {max_top_k}.",
+                            "minimum": 1,
+                            "maximum": max_top_k,
+                        },
+                    },
+                    "required": ["query", "top_k"],
+                },
+            },
+        }
+    ]
 
 
 def load_yaml_template(path: Path) -> dict[str, str]:
@@ -531,7 +535,7 @@ def _training_record(messages: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "messages": messages,
         "parallel_tool_calls": DEFAULT_PARALLEL_TOOL_CALLS,
-        "tools": deepcopy(DEFAULT_TOOLS),
+        "tools": default_tools(),
     }
 
 

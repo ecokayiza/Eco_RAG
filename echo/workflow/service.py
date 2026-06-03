@@ -95,6 +95,7 @@ class WorkflowService:
             model=self.model_factory(),
             tool_client=filtered_tool_client,
             max_retrieve_rounds=settings.max_retrieve_rounds,
+            max_parallel_tool_calls=settings.max_parallel_tool_calls,
         )
 
     def _default_context(self, query: str, context: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:

@@ -17,10 +17,13 @@ def main():
     dataset_id = "hhjinjiajie/FlashRAG_Dataset"
     local_dir = "./tests/data"
     file_patterns = [
-        "retrieval_corpus/wiki18_100w.jsonl",
-        "retrieval_corpus/wiki18_100w_e5_index.zip",
-        "hotpotqa/dev.jsonl",
-        "hotpotqa/train.jsonl",
+        # "retrieval_corpus/wiki18_100w.jsonl",
+        # "retrieval_corpus/wiki18_100w_e5_index.zip",
+        # "hotpotqa/dev.jsonl",
+        # "hotpotqa/train.jsonl",
+	"2wikimultihopqa/dev.jsonl",
+	"musique/dev.jsonl"
+
     ]
 
     try:

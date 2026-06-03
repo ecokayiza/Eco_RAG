@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from echo.settings import load_app_settings
+
 # Keep these imports at module load time. Lazy importing the RAG stack inside
 # the stdio MCP request path can hang under the Windows child process.
 from mcp_server.rag import database_registry, embedder, schema, vector_database
 
 DEFAULT_DATABASE_SEARCH_TOP_K = 4
-MAX_DATABASE_SEARCH_TOP_K = 5
 
 
 def _clamp_top_k(top_k: Any, default: int = DEFAULT_DATABASE_SEARCH_TOP_K) -> int:
@@ -15,7 +16,8 @@ def _clamp_top_k(top_k: Any, default: int = DEFAULT_DATABASE_SEARCH_TOP_K) -> in
         requested = int(top_k or default)
     except (TypeError, ValueError):
         requested = default
-    return max(1, min(requested, MAX_DATABASE_SEARCH_TOP_K))
+    limit = load_app_settings().max_database_search_top_k
+    return max(1, min(requested, max(1, limit)))
 
 
 def database_search(query: str, top_k: int = 4) -> dict[str, Any]:

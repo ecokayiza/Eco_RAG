@@ -105,6 +105,38 @@ export function RuntimeSettingsSection({ busy, settings, onUpdate }: RuntimeSett
                 value={String(settings.max_retrieve_rounds)}
               />
             </Field>
+            <Field htmlFor="runtime-search-top-k" label="Max Search Results">
+              <input
+                disabled={busy}
+                id="runtime-search-top-k"
+                min={1}
+                onChange={(event) => {
+                  onUpdate(
+                    "max_database_search_top_k",
+                    positiveIntegerValue(event.target.value, settings.max_database_search_top_k)
+                  );
+                }}
+                step={1}
+                type="number"
+                value={String(settings.max_database_search_top_k)}
+              />
+            </Field>
+            <Field htmlFor="runtime-parallel-tool-calls" label="Max Parallel Tool Calls">
+              <input
+                disabled={busy}
+                id="runtime-parallel-tool-calls"
+                min={1}
+                onChange={(event) => {
+                  onUpdate(
+                    "max_parallel_tool_calls",
+                    positiveIntegerValue(event.target.value, settings.max_parallel_tool_calls)
+                  );
+                }}
+                step={1}
+                type="number"
+                value={String(settings.max_parallel_tool_calls)}
+              />
+            </Field>
             <Field htmlFor="runtime-web-search-backend" label="Web Search Backend">
               <select
                 disabled={busy}

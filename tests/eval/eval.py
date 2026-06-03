@@ -13,19 +13,35 @@ from typing import Any, Iterator
 
 from tqdm import tqdm
 
+from echo.settings import load_app_settings
+
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DEFAULT_CORPUS_PATH = DEFAULT_DATA_DIR / "retrieval_corpus" / "wiki18_100w.jsonl"
 DEFAULT_INDEX_PATH = DEFAULT_DATA_DIR / "retrieval_corpus" / "e5_flat_inner.index"
 DEFAULT_DATABASE_SEARCH_TOP_K = 4
-MAX_DATABASE_SEARCH_TOP_K = 5
+DATASET_PATHS = {
+    "hotpotqa": DEFAULT_DATA_DIR / "hotpotqa" / "test-1000.jsonl",
+    "2wiki": DEFAULT_DATA_DIR / "2wikimultihopqa" / "test-1000.jsonl",
+    "2wikimultihopqa": DEFAULT_DATA_DIR / "2wikimultihopqa" / "test-1000.jsonl",
+    "musique": DEFAULT_DATA_DIR / "musique" / "test-1000.jsonl",
+}
 
 
-def clamp_database_search_top_k(top_k: Any, default: int = DEFAULT_DATABASE_SEARCH_TOP_K) -> int:
+def database_search_top_k_limit() -> int:
+    return load_app_settings().max_database_search_top_k
+
+
+def clamp_database_search_top_k(
+    top_k: Any,
+    default: int = DEFAULT_DATABASE_SEARCH_TOP_K,
+    max_top_k: int | None = None,
+) -> int:
     try:
         requested = int(top_k or default)
     except (TypeError, ValueError):
         requested = default
-    return max(1, min(requested, MAX_DATABASE_SEARCH_TOP_K))
+    limit = max_top_k if max_top_k is not None else database_search_top_k_limit()
+    return max(1, min(requested, max(1, limit)))
 
 
 class JsonlDocstore:
@@ -109,9 +125,9 @@ class FlashRAGToolClient:
                             "query": {"type": "string", "description": "Focused retrieval query."},
                             "top_k": {
                                 "type": "integer",
-                                "description": "Number of passages to retrieve, capped at 5.",
+                                "description": f"Number of passages to retrieve, capped at {database_search_top_k_limit()}.",
                                 "minimum": 1,
-                                "maximum": MAX_DATABASE_SEARCH_TOP_K,
+                                "maximum": database_search_top_k_limit(),
                             },
                         },
                         "required": ["query", "top_k"],
@@ -302,14 +318,14 @@ async def workflow_answer_with_retries(
 
 
 async def evaluate_async(args: argparse.Namespace) -> dict[str, Any]:
-    session_id = args.session_id or "eval-hotpotqa"
+    session_id = args.session_id or f"eval-{args.dataset}"
     index = FlashRAGIndex(
         corpus_path=args.corpus_path,
         index_path=args.flashrag_index_path,
         faiss_mmap=args.faiss_mmap,
     )
     try:
-        records = list(iter_jsonl_with_rows(args.hotpotqa_path, limit=positive_or_none(args.max_questions)))
+        records = list(iter_jsonl_with_rows(args.dataset_path, limit=positive_or_none(args.max_questions)))
         existing_results = load_results(args.results_path)
         pending_records = [
             (row, record)
@@ -433,13 +449,15 @@ def existing_file(path: Path, label: str) -> Path:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate Echo workflow answers on HotpotQA with the FlashRAG wiki18_100w index.")
+    parser = argparse.ArgumentParser(description="Evaluate Echo workflow answers on a FlashRAG QA dataset with the wiki18_100w index.")
     parser.add_argument("--corpus-path", type=Path, default=DEFAULT_CORPUS_PATH)
     parser.add_argument("--flashrag-index-path", type=Path, default=DEFAULT_INDEX_PATH)
-    parser.add_argument("--hotpotqa-path", type=Path)
+    parser.add_argument("--dataset", default=None, help="Dataset name used in default session ids, e.g. hotpotqa, 2wikimultihopqa, or musique.")
+    parser.add_argument("--dataset-path", type=Path, default=None, help="JSONL dataset path with question and answer fields.")
+    parser.add_argument("--hotpotqa-path", type=Path, default=None, help="Deprecated alias for --dataset-path.")
     parser.add_argument("--results-path", type=Path)
     parser.add_argument("--max-questions", type=int, default=50, help="0 means all questions.")
-    parser.add_argument("--session-id", default=None, help="Base chat memory session id. Defaults to eval-hotpotqa; each question appends its stable record id.")
+    parser.add_argument("--session-id", default=None, help="Base chat memory session id. Defaults to eval-<dataset>; each question appends its stable record id.")
     parser.add_argument("--concurrency", type=int, default=1, help="Number of questions to evaluate concurrently.")
     parser.add_argument("--faiss-mmap", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--retry-attempts", type=int, default=5)
@@ -459,7 +477,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         raise SystemExit("--retry-max-sleep-seconds cannot be negative.")
     args.corpus_path = existing_file(args.corpus_path, "wiki18_100w corpus")
     args.flashrag_index_path = existing_file(args.flashrag_index_path, "FlashRAG FAISS index")
-    args.hotpotqa_path = existing_file(args.hotpotqa_path, "HotpotQA dataset")
+    if args.dataset_path is not None and args.hotpotqa_path is not None and args.dataset_path != args.hotpotqa_path:
+        raise SystemExit("--dataset-path and --hotpotqa-path point to different files.")
+    if args.dataset_path is None and args.hotpotqa_path is None:
+        dataset = args.dataset or "hotpotqa"
+        args.dataset_path = DATASET_PATHS.get(dataset)
+        if args.dataset_path is None:
+            choices = ", ".join(sorted(DATASET_PATHS))
+            raise SystemExit(f"Unknown dataset '{dataset}'. Use --dataset-path or one of: {choices}.")
+    else:
+        args.dataset_path = args.dataset_path or args.hotpotqa_path
+    args.dataset_path = existing_file(args.dataset_path, "dataset")
+    if args.dataset is None:
+        args.dataset = args.dataset_path.parent.name or args.dataset_path.stem
     return args
 
 

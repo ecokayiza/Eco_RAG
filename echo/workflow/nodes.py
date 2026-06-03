@@ -40,6 +40,7 @@ class WorkflowDependencies:
     model: BaseChatModel
     tool_client: ToolClient
     max_retrieve_rounds: int = 10
+    max_parallel_tool_calls: int = 3
 
 
 async def plan_node(state: WorkflowState, deps: WorkflowDependencies) -> WorkflowState:
@@ -54,10 +55,15 @@ async def plan_node(state: WorkflowState, deps: WorkflowDependencies) -> Workflo
         node=WorkflowStep.PLAN.value,
         allow_retrieve=bool(deps.tool_client.tool_names),
         allowed_tool_names=deps.tool_client.tool_names,
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
         requested_skill=state.get("requested_skill"),
     )
     content = (response.content or "").strip()
-    pending_retrieve = _pending_retrieve_with_native_tool_calls(state, decision.get("pending_retrieve"))
+    pending_retrieve = _pending_retrieve_with_native_tool_calls(
+        state,
+        decision.get("pending_retrieve"),
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
+    )
     return {
         **state,
         "next_step": decision["next_step"],
@@ -84,7 +90,10 @@ async def retrieve_node(state: WorkflowState) -> WorkflowState:
 
 async def tool_node(state: WorkflowState, deps: WorkflowDependencies) -> WorkflowState:
     """Execute the pending MCP tool-call batch and store normalized results."""
-    pending_retrieve = _pending_retrieve_calls(state.get("pending_retrieve"))
+    pending_retrieve = _pending_retrieve_calls(
+        state.get("pending_retrieve"),
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
+    )
     if not pending_retrieve:
         raise ValueError("Tool node requires at least one pending native tool call.")
 
@@ -138,9 +147,14 @@ async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> Workfl
         node=WorkflowStep.THINK.value,
         allow_retrieve=allow_retrieve,
         allowed_tool_names=deps.tool_client.tool_names,
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
     )
     content = (response.content or "").strip()
-    pending_retrieve = _pending_retrieve_with_native_tool_calls(state, decision.get("pending_retrieve"))
+    pending_retrieve = _pending_retrieve_with_native_tool_calls(
+        state,
+        decision.get("pending_retrieve"),
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
+    )
     next_memory = _append_memory(
         state["workflow_memory"],
         _assistant_memory_item(content, pending_retrieve),
@@ -408,6 +422,7 @@ def _decision_from_response(
     node: str,
     allow_retrieve: bool,
     allowed_tool_names: set[str],
+    max_parallel_tool_calls: int,
     requested_skill: str | None = None,
 ) -> dict[str, Any]:
     """Parse one native-tool-only decision-node response."""
@@ -433,7 +448,11 @@ def _decision_from_response(
                 raise ValueError(f"{node.title()} node cannot request more retrieval.")
             return {
                 "next_step": WorkflowStep.RETRIEVE.value,
-                "pending_retrieve": _pending_retrieve_from_native_tool_calls(response.tool_calls, allowed_tool_names),
+                "pending_retrieve": _pending_retrieve_from_native_tool_calls(
+                    response.tool_calls,
+                    allowed_tool_names,
+                    max_parallel_tool_calls=max_parallel_tool_calls,
+                ),
             }
 
         if _has_action_block(sections, "answer"):
@@ -456,11 +475,14 @@ def _decision_from_response(
 def _pending_retrieve_from_native_tool_calls(
     tool_calls: list[dict[str, Any]],
     allowed_tool_names: set[str],
+    *,
+    max_parallel_tool_calls: int,
 ) -> list[dict[str, Any]]:
     """Convert provider-native tool calls into Echo pending tool calls."""
     calls = [item for item in tool_calls if isinstance(item, dict) and str(item.get("name") or "").strip()]
     if not calls:
         raise ValueError("Workflow decisions must include at least one provider-native tool call.")
+    calls = calls[: _parallel_tool_call_limit(max_parallel_tool_calls)]
 
     pending_calls: list[dict[str, Any]] = []
     for tool_call in calls:
@@ -705,6 +727,11 @@ async def _stream_decision_response(
             usage.clear()
             usage.update(response.token_usage)
 
+    selected_tool_calls = _select_native_tool_calls(
+        native_tool_calls,
+        deps.tool_client.tool_names,
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
+    )
     if node == WorkflowStep.THINK.value and _needs_decision_repair(node, content, selected_tool_calls):
         response = await deps.model.generate_response(
             _answer_repair_messages(workflow_messages),
@@ -1011,15 +1038,29 @@ def _tool_call_decision_text(content: str, sections: dict[str, str]) -> str | No
     return _optional_text(text)
 
 
-def _select_native_tool_calls(tool_calls: list[dict[str, Any]], allowed_tool_names: set[str]) -> list[dict[str, Any]]:
-    """Keep complete allowed native tool calls and drop empty or disabled placeholders."""
-    return [
+def _parallel_tool_call_limit(value: int) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        limit = 1
+    return max(1, limit)
+
+
+def _select_native_tool_calls(
+    tool_calls: list[dict[str, Any]],
+    allowed_tool_names: set[str],
+    *,
+    max_parallel_tool_calls: int,
+) -> list[dict[str, Any]]:
+    """Keep complete named native tool calls and drop empty placeholders."""
+    selected = [
         dict(item)
         for item in tool_calls
         if isinstance(item, dict)
         and (name := str(item.get("name") or "").strip())
         and name in allowed_tool_names
     ]
+    return selected[: _parallel_tool_call_limit(max_parallel_tool_calls)]
 
 
 def _record_message_type(node: str, content: str, tool_calls: list[dict[str, Any]]) -> str:
@@ -1058,13 +1099,17 @@ def _tool_record_suffix(*, round_number: int, call_index: int, call_count: int) 
     return f"{round_number}.{call_index}"
 
 
-def _pending_retrieve_calls(pending_retrieve: Any) -> list[dict[str, Any]]:
+def _pending_retrieve_calls(pending_retrieve: Any, *, max_parallel_tool_calls: int | None = None) -> list[dict[str, Any]]:
     """Normalize old single-call drafts and current call batches into a list."""
     if isinstance(pending_retrieve, dict):
-        return [dict(pending_retrieve)]
-    if not isinstance(pending_retrieve, list):
-        return []
-    return [dict(item) for item in pending_retrieve if isinstance(item, dict)]
+        calls = [dict(pending_retrieve)]
+    elif isinstance(pending_retrieve, list):
+        calls = [dict(item) for item in pending_retrieve if isinstance(item, dict)]
+    else:
+        calls = []
+    if max_parallel_tool_calls is not None:
+        calls = calls[: _parallel_tool_call_limit(max_parallel_tool_calls)]
+    return calls
 
 
 def _tool_call_id(state: WorkflowState, *, round_number: int, call_index: int = 1) -> str:
@@ -1076,9 +1121,11 @@ def _tool_call_id(state: WorkflowState, *, round_number: int, call_index: int = 
 def _pending_retrieve_with_native_tool_calls(
     state: WorkflowState,
     pending_retrieve: Any,
+    *,
+    max_parallel_tool_calls: int,
 ) -> list[dict[str, Any]] | None:
     """Attach stable tool_call_ids to the pending retrieval batch."""
-    pending_calls = _pending_retrieve_calls(pending_retrieve)
+    pending_calls = _pending_retrieve_calls(pending_retrieve, max_parallel_tool_calls=max_parallel_tool_calls)
     if not pending_calls:
         return None
     resolved: list[dict[str, Any]] = []
