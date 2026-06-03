@@ -46,6 +46,7 @@ const defaultAppSettings: AppSettingsDocument = {
   chunk_overlap: 200,
   max_retrieve_rounds: 10,
   max_database_search_top_k: 5,
+  max_web_search_results: 8,
   max_parallel_tool_calls: 3,
   use_marker_pdf_loader: true,
   default_database_backend: "chroma",
@@ -416,6 +417,10 @@ function normalizeAppSettings(settings: Partial<AppSettingsDocument> | null | un
     max_database_search_top_k: positiveInteger(
       settings?.max_database_search_top_k,
       defaultAppSettings.max_database_search_top_k
+    ),
+    max_web_search_results: positiveInteger(
+      settings?.max_web_search_results,
+      defaultAppSettings.max_web_search_results
     ),
     max_parallel_tool_calls: positiveInteger(
       settings?.max_parallel_tool_calls,

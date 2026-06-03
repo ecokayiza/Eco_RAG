@@ -12,6 +12,8 @@ from typing import Any, Protocol
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from echo.settings import load_app_settings
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -111,7 +113,9 @@ class SharedMCPToolClient:
     def __init__(self, client: StdioMCPToolClient | None = None):
         self._client = client or StdioMCPToolClient()
         self._connect_lock = asyncio.Lock()
-        self._call_lock = asyncio.Lock()
+        self._state_condition = asyncio.Condition()
+        self._active_calls = 0
+        self._closing = False
         self._connected = False
 
     @property
@@ -126,6 +130,8 @@ class SharedMCPToolClient:
         async with self._connect_lock:
             if not self._connected:
                 await self._client.__aenter__()
+                async with self._state_condition:
+                    self._closing = False
                 self._connected = True
         return self
 
@@ -133,17 +139,34 @@ class SharedMCPToolClient:
         async with self._connect_lock:
             if not self._connected:
                 return
-            async with self._call_lock:
-                await self._client.__aexit__(None, None, None)
-                self._connected = False
+            async with self._state_condition:
+                self._closing = True
+                while self._active_calls:
+                    await self._state_condition.wait()
+            await self._client.__aexit__(None, None, None)
+            self._connected = False
+            async with self._state_condition:
+                self._closing = False
 
     def context(self) -> AbstractAsyncContextManager[ToolClient]:
         return _SharedMCPToolClientContext(self)
 
     async def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        await self.connect()
-        async with self._call_lock:
+        async with self._connect_lock:
+            if not self._connected:
+                await self._client.__aenter__()
+                self._connected = True
+            async with self._state_condition:
+                if self._closing:
+                    raise RuntimeError("MCP tool client is closing.")
+                self._active_calls += 1
+        try:
             return await self._client.call_tool(name, args)
+        finally:
+            async with self._state_condition:
+                self._active_calls -= 1
+                if self._active_calls <= 0:
+                    self._state_condition.notify_all()
 
 
 class _SharedMCPToolClientContext(AbstractAsyncContextManager[ToolClient]):
@@ -171,16 +194,50 @@ def _tool_schema(tool: ToolSpec) -> dict[str, Any]:
         "function": {
             "name": tool.name,
             "description": tool.description,
-            "parameters": _compact_input_schema(tool.input_schema),
+            "parameters": _compact_input_schema(tool.input_schema, tool_name=tool.name),
         },
     }
 
 
-def _compact_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+def _compact_input_schema(schema: dict[str, Any], *, tool_name: str | None = None) -> dict[str, Any]:
     if not schema:
         return {"type": "object", "properties": {}}
     compacted = _strip_schema_titles(schema)
-    return compacted if isinstance(compacted, dict) else {"type": "object", "properties": {}}
+    if not isinstance(compacted, dict):
+        return {"type": "object", "properties": {}}
+    return _with_runtime_tool_limits(compacted, tool_name=tool_name)
+
+
+def _with_runtime_tool_limits(schema: dict[str, Any], *, tool_name: str | None = None) -> dict[str, Any]:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return schema
+
+    settings = load_app_settings()
+    next_properties = dict(properties)
+
+    if tool_name == "database_search" and isinstance(next_properties.get("top_k"), dict):
+        top_k = dict(next_properties["top_k"])
+        limit = max(1, settings.max_database_search_top_k)
+        top_k["minimum"] = 1
+        top_k["maximum"] = limit
+        top_k["description"] = str(top_k.get("description") or f"Number of passages to retrieve, capped at {limit}.")
+        next_properties["top_k"] = top_k
+
+    if tool_name == "web_search" and isinstance(next_properties.get("max_results"), dict):
+        max_results = dict(next_properties["max_results"])
+        limit = max(1, settings.max_web_search_results)
+        max_results["minimum"] = 1
+        max_results["maximum"] = limit
+        max_results["description"] = str(
+            max_results.get("description") or f"Maximum web search results to return, capped at {limit}."
+        )
+        next_properties["max_results"] = max_results
+
+    if next_properties == properties:
+        return schema
+
+    return {**schema, "properties": next_properties}
 
 
 def _strip_schema_titles(value: Any) -> Any:

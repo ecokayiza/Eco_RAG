@@ -689,7 +689,11 @@ async def _stream_decision_response(
             usage.clear()
             usage.update(response.token_usage)
 
-    selected_tool_calls = _select_native_tool_calls(native_tool_calls, deps.tool_client.tool_names)
+    selected_tool_calls = _select_native_tool_calls(
+        native_tool_calls,
+        deps.tool_client.tool_names,
+        max_parallel_tool_calls=deps.max_parallel_tool_calls,
+    )
     if _needs_decision_repair(node, content, selected_tool_calls):
         if force_answer:
             response = await deps.model.generate_response(
@@ -710,7 +714,11 @@ async def _stream_decision_response(
             content = (response.content or "").strip()
             native_tool_calls.clear()
             native_tool_calls.extend(response.tool_calls or [])
-            selected_tool_calls = _select_native_tool_calls(native_tool_calls, deps.tool_client.tool_names)
+            selected_tool_calls = _select_native_tool_calls(
+                native_tool_calls,
+                deps.tool_client.tool_names,
+                max_parallel_tool_calls=deps.max_parallel_tool_calls,
+            )
             if response.token_usage:
                 usage.clear()
                 usage.update(response.token_usage)

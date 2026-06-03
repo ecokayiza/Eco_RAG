@@ -152,6 +152,7 @@ def save_skill_settings_document(document: SkillSettingsDocument | dict) -> Skil
             chunk_overlap=current_settings.chunk_overlap,
             max_retrieve_rounds=current_settings.max_retrieve_rounds,
             max_database_search_top_k=current_settings.max_database_search_top_k,
+            max_web_search_results=current_settings.max_web_search_results,
             max_parallel_tool_calls=current_settings.max_parallel_tool_calls,
             use_marker_pdf_loader=current_settings.use_marker_pdf_loader,
             default_database_backend=current_settings.default_database_backend,

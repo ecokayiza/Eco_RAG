@@ -105,7 +105,23 @@ export function RuntimeSettingsSection({ busy, settings, onUpdate }: RuntimeSett
                 value={String(settings.max_retrieve_rounds)}
               />
             </Field>
-            <Field htmlFor="runtime-search-top-k" label="Max Search Results">
+            <Field htmlFor="runtime-parallel-tool-calls" label="Max Parallel Tool Calls">
+              <input
+                disabled={busy}
+                id="runtime-parallel-tool-calls"
+                min={1}
+                onChange={(event) => {
+                  onUpdate(
+                    "max_parallel_tool_calls",
+                    positiveIntegerValue(event.target.value, settings.max_parallel_tool_calls)
+                  );
+                }}
+                step={1}
+                type="number"
+                value={String(settings.max_parallel_tool_calls)}
+              />
+            </Field>
+            <Field htmlFor="runtime-search-top-k" label="Max Database Results">
               <input
                 disabled={busy}
                 id="runtime-search-top-k"
@@ -121,20 +137,20 @@ export function RuntimeSettingsSection({ busy, settings, onUpdate }: RuntimeSett
                 value={String(settings.max_database_search_top_k)}
               />
             </Field>
-            <Field htmlFor="runtime-parallel-tool-calls" label="Max Parallel Tool Calls">
+            <Field htmlFor="runtime-web-search-results" label="Max Web Results">
               <input
                 disabled={busy}
-                id="runtime-parallel-tool-calls"
+                id="runtime-web-search-results"
                 min={1}
                 onChange={(event) => {
                   onUpdate(
-                    "max_parallel_tool_calls",
-                    positiveIntegerValue(event.target.value, settings.max_parallel_tool_calls)
+                    "max_web_search_results",
+                    positiveIntegerValue(event.target.value, settings.max_web_search_results)
                   );
                 }}
                 step={1}
                 type="number"
-                value={String(settings.max_parallel_tool_calls)}
+                value={String(settings.max_web_search_results)}
               />
             </Field>
             <Field htmlFor="runtime-web-search-backend" label="Web Search Backend">

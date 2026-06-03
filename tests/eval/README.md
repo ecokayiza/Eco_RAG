@@ -113,7 +113,7 @@ python tests/eval/eval.py \
 Extract eval rows and scores:
 
 ```bash
-python tests/eval/results_extractor.py \
+python results_extractor.py \
   --mode eval \
   --results-path 2wiki_test-v2.jsonl \
   --output-path 2wiki_test_results-v2.jsonl \

@@ -3,6 +3,7 @@
   "chunk_overlap": 50,
   "max_retrieve_rounds": 10,
   "max_database_search_top_k": 5,
+  "max_web_search_results": 7,
   "max_parallel_tool_calls": 3,
   "use_marker_pdf_loader": true,
   "default_database_backend": "chroma",

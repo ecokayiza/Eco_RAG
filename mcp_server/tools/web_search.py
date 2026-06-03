@@ -42,7 +42,7 @@ def web_search(
         for item in ([query] if query is not None else []) + list(queries or [])
     ]
     prepared_queries = [item for item in prepared_queries if item]
-    limit = max(1, min(int(max_results or 5), 8))
+    limit = _clamp_max_results(max_results)
     if not prepared_queries:
         return {
             "type": "context",
@@ -75,6 +75,15 @@ def web_search(
         "backend": selected_backend,
         "items": items,
     }
+
+
+def _clamp_max_results(max_results: Any, default: int = 5) -> int:
+    try:
+        requested = int(max_results or default)
+    except (TypeError, ValueError):
+        requested = default
+    configured_limit = load_app_settings().max_web_search_results
+    return max(1, min(requested, max(1, configured_limit)))
 
 
 class _DuckDuckGoParser(HTMLParser):
