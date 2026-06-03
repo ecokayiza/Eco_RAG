@@ -5,9 +5,9 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, urlparse, urlunparse
-from urllib.request import Request, urlopen
 
 from echo.settings import load_app_settings
+from .http_client import REQUEST_HEADERS, fetch_text
 
 SEARCH_BACKENDS = {
     "auto": (
@@ -21,14 +21,8 @@ SEARCH_BACKENDS = {
     ),
     "baidu": (("baidu", "http://www.baidu.com/s?wd={query}&ie=utf-8", "baidu"),),
 }
-REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
+MAX_SEARCH_RESPONSE_BYTES = 1_500_000
+SEARCH_TIMEOUT_SECONDS = 8
 
 
 def web_search(
@@ -276,9 +270,7 @@ def _search_one_query(query: str, backend: str) -> list[dict[str, str | None]]:
 
 
 def _fetch(url: str) -> str:
-    request = Request(url, headers=REQUEST_HEADERS)
-    with urlopen(request, timeout=12) as response:
-        return response.read().decode("utf-8", errors="replace")
+    return fetch_text(url, timeout=SEARCH_TIMEOUT_SECONDS, max_bytes=MAX_SEARCH_RESPONSE_BYTES)
 
 
 def _parse_payload(payload: str, parser_name: str) -> list[dict[str, str | None]]:

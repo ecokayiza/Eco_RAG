@@ -7,13 +7,15 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 from echo.settings import load_app_settings
-from .web_search import REQUEST_HEADERS
+from .http_client import REQUEST_HEADERS, fetch_text
 
 MAX_FETCH_CHARS = 50_000
+MAX_FETCH_RESPONSE_BYTES = 3_000_000
+FETCH_TIMEOUT_SECONDS = 10
 SCREENSHOT_VIEWPORT = {"width": 1280, "height": 1600}
+BROWSER_HEADERS = {key: value for key, value in REQUEST_HEADERS.items() if key.lower() != "accept-encoding"}
 
 
 def web_fetch(url: str, max_chars: int = 8000) -> dict[str, Any]:
@@ -65,12 +67,7 @@ def _validated_url(value: str) -> str:
 
 
 def _fetch(url: str) -> str:
-    request = Request(url, headers=REQUEST_HEADERS)
-    with urlopen(request, timeout=15) as response:
-        body = response.read()
-        headers = getattr(response, "headers", None)
-        charset = headers.get_content_charset() if hasattr(headers, "get_content_charset") else None
-        return body.decode(charset or "utf-8", errors="replace")
+    return fetch_text(url, timeout=FETCH_TIMEOUT_SECONDS, max_bytes=MAX_FETCH_RESPONSE_BYTES)
 
 
 def _fetch_with_browser(url: str) -> tuple[str, str, str]:
@@ -126,7 +123,7 @@ def _fetch_with_browser_sync(url: str) -> tuple[str, str, str]:
             page = browser.new_page(
                 viewport=SCREENSHOT_VIEWPORT,
                 device_scale_factor=1,
-                extra_http_headers=REQUEST_HEADERS,
+                extra_http_headers=BROWSER_HEADERS,
             )
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=20_000)
