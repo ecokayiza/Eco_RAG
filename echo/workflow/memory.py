@@ -65,7 +65,7 @@ def _redacted_tool_content(content: Any) -> str:
     tool_block = parse_workflow_sections(str(content or ""), allow_unclosed=True).get("tool")
     source = tool_block if tool_block is not None else str(content or "")
     heading = _first_nonempty_line(source)
-    marker = "[tool result hidden from model context]"
+    marker = "[information hidden]"
     hidden = f"{heading}\n\n{marker}" if heading else marker
     return render_workflow_section("tool", hidden)
 
