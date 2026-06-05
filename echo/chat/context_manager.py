@@ -288,7 +288,7 @@ class Messages:
         session = self.sessions.get()
         message = Message(
             role=role,
-            content=self._text(content, "Message content cannot be empty."),
+            content=self._message_content(role, content, tool_calls),
             message_type=message_type,
             workflow_turn_id=workflow_turn_id,
             tool_name=tool_name,
@@ -506,6 +506,15 @@ class Messages:
         if not content:
             raise ValueError(error)
         return content
+
+    @staticmethod
+    def _message_content(role: str, content: str | None, tool_calls: list[dict[str, Any]] | None) -> str:
+        content = (content or "").strip()
+        if content:
+            return content
+        if str(role or "").strip() == "assistant" and isinstance(tool_calls, list) and tool_calls:
+            return ""
+        raise ValueError("Message content cannot be empty.")
 
     @staticmethod
     def _set_system(session: dict[str, Any], content: str | None) -> dict[str, Any]:

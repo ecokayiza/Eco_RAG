@@ -591,6 +591,8 @@ def _redact_previous_tool_results(messages: list[dict[str, Any]], *, before: int
         if role == "tool":
             messages[index]["content"] = _redacted_tool_content(messages[index].get("content"))
             continue
+        if _is_tool_call_carrier(messages[index]):
+            continue
         if role == "assistant":
             return
         return
@@ -604,6 +606,16 @@ def _is_visual_memory_item(message: dict[str, Any]) -> bool:
     return (
         any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
         and all(isinstance(part, dict) and part.get("type") in allowed_types for part in content)
+    )
+
+
+def _is_tool_call_carrier(message: dict[str, Any]) -> bool:
+    tool_calls = message.get("tool_calls")
+    return (
+        str(message.get("role") or "").strip() == "assistant"
+        and not str(message.get("content") or "").strip()
+        and isinstance(tool_calls, list)
+        and bool(tool_calls)
     )
 
 

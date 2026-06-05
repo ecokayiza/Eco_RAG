@@ -46,7 +46,7 @@ class WorkflowDependencies:
 
 async def plan_node(state: WorkflowState, deps: WorkflowDependencies) -> WorkflowState:
     """Choose whether to answer now or enter retrieval."""
-    response, streamed_answer = await _stream_decision_response(
+    response, streamed_answer, split_tool_call_message = await _stream_decision_response(
         state,
         deps,
         node=WorkflowStep.PLAN.value,
@@ -73,7 +73,7 @@ async def plan_node(state: WorkflowState, deps: WorkflowDependencies) -> Workflo
         "streamed_answer": streamed_answer if decision["next_step"] == WorkflowStep.ANSWER.value else "",
         "workflow_memory": _append_memory(
             state["workflow_memory"],
-            _assistant_memory_item(content, pending_retrieve),
+            *_assistant_memory_items(content, pending_retrieve, split_tool_call_message=split_tool_call_message),
         ),
     }
 
@@ -137,7 +137,7 @@ async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> Workfl
     """Reflect on the accumulated transcript and decide whether to retrieve or answer."""
     limit_reached = bool(deps.tool_client.tool_names) and state["retrieve_round"] >= deps.max_retrieve_rounds
     allow_retrieve = bool(deps.tool_client.tool_names) and not limit_reached
-    response, streamed_answer = await _stream_decision_response(
+    response, streamed_answer, split_tool_call_message = await _stream_decision_response(
         state,
         deps,
         node=WorkflowStep.THINK.value,
@@ -158,7 +158,7 @@ async def think_node(state: WorkflowState, deps: WorkflowDependencies) -> Workfl
     )
     next_memory = _append_memory(
         state["workflow_memory"],
-        _assistant_memory_item(content, pending_retrieve),
+        *_assistant_memory_items(content, pending_retrieve, split_tool_call_message=split_tool_call_message),
     )
     return {
         **state,
@@ -257,12 +257,14 @@ def _append_memory(
     for item in [*workflow_memory, *items]:
         role = str(item.get("role") or "").strip()
         content = _message_content(item.get("content"))
-        if role not in {"system", "user", "assistant", "tool"} or not content:
-            continue
-        payload: dict[str, Any] = {"role": role, "content": content}
         tool_calls = item.get("tool_calls")
-        if role == "assistant" and isinstance(tool_calls, list) and tool_calls:
-            payload["tool_calls"] = [dict(entry) for entry in tool_calls if isinstance(entry, dict)]
+        provider_tool_calls = [dict(entry) for entry in tool_calls if isinstance(entry, dict)] if isinstance(tool_calls, list) else []
+        has_tool_calls = role == "assistant" and bool(provider_tool_calls)
+        if role not in {"system", "user", "assistant", "tool"} or (content is None and not has_tool_calls):
+            continue
+        payload: dict[str, Any] = {"role": role, "content": content if content is not None else ""}
+        if has_tool_calls:
+            payload["tool_calls"] = provider_tool_calls
         tool_call_id = _optional_text(item.get("tool_call_id"))
         if role == "tool" and tool_call_id:
             payload["tool_call_id"] = tool_call_id
@@ -625,13 +627,14 @@ async def _stream_decision_response(
     *,
     node: str,
     force_answer: bool = False,
-) -> tuple[Response, str]:
+) -> tuple[Response, str, bool]:
     """Stream one plan/think decision, emitting live record updates and answer chunks."""
     usage: dict[str, Any] = {}
     native_tool_calls: list[dict[str, Any]] = []
     content = ""
     streamed_answer = ""
     record_id = _decision_record_id(state, node)
+    split_tool_call_message = False
     writer = get_stream_writer()
 
     def on_usage(payload: dict[str, Any] | None):
@@ -721,6 +724,7 @@ async def _stream_decision_response(
                 deps.tool_client.tool_names,
                 max_parallel_tool_calls=deps.max_parallel_tool_calls,
             )
+            split_tool_call_message = bool(selected_tool_calls and pre_repair_content)
             content = _repair_decision_content(node, pre_repair_content, repair_content, selected_tool_calls)
             if response.token_usage:
                 usage.clear()
@@ -734,6 +738,7 @@ async def _stream_decision_response(
         content = _coerce_answer_content(response.content, state)
         native_tool_calls.clear()
         selected_tool_calls = []
+        split_tool_call_message = False
         if response.token_usage:
             usage.clear()
             usage.update(response.token_usage)
@@ -743,36 +748,59 @@ async def _stream_decision_response(
         deps.tool_client.tool_names,
         max_parallel_tool_calls=deps.max_parallel_tool_calls,
     )
-    if node == WorkflowStep.THINK.value and _needs_decision_repair(node, content, selected_tool_calls):
+    if _needs_decision_repair(node, content, selected_tool_calls):
         response = await deps.model.generate_response(
             _answer_repair_messages(workflow_messages),
             tools=None,
         )
         content = _coerce_answer_content(response.content, state)
         selected_tool_calls = []
+        split_tool_call_message = False
         if response.token_usage:
             usage.clear()
             usage.update(response.token_usage)
 
+    if _needs_decision_repair(node, content, selected_tool_calls):
+        raise ValueError(_missing_action_decision_message(node, content))
+
     final_content = _sanitize_decision_content(
         _with_native_tool_call_content(node, content.strip(), selected_tool_calls)
     )
-    if not final_content:
+    provider_tool_calls = _provider_tool_calls(selected_tool_calls)
+    if not final_content and not provider_tool_calls:
         raise ValueError(_empty_decision_message(node))
 
-    record = {
-        "id": record_id,
-        "role": "assistant",
-        "content": final_content,
-        "message_type": _record_message_type(node, final_content, selected_tool_calls),
-        "workflow_turn_id": state["workflow_turn_id"],
-        "token_usage": usage or None,
-        "persist": True,
-    }
-    provider_tool_calls = _provider_tool_calls(selected_tool_calls)
-    if provider_tool_calls:
-        record["tool_calls"] = provider_tool_calls
-    _emit_record(record)
+    if final_content:
+        record = {
+            "id": record_id,
+            "role": "assistant",
+            "content": final_content,
+            "message_type": _record_message_type(
+                node,
+                final_content,
+                [] if split_tool_call_message else selected_tool_calls,
+            ),
+            "workflow_turn_id": state["workflow_turn_id"],
+            "token_usage": None if split_tool_call_message else usage or None,
+            "persist": True,
+        }
+        if provider_tool_calls and not split_tool_call_message:
+            record["tool_calls"] = provider_tool_calls
+        _emit_record(record)
+
+    if provider_tool_calls and (split_tool_call_message or not final_content):
+        _emit_record(
+            {
+                "id": _tool_call_record_id(state, node),
+                "role": "assistant",
+                "content": "",
+                "message_type": node,
+                "workflow_turn_id": state["workflow_turn_id"],
+                "tool_calls": provider_tool_calls,
+                "token_usage": usage or None,
+                "persist": True,
+            }
+        )
 
     streamed_answer = _emit_streaming_answer(
         writer,
@@ -787,6 +815,7 @@ async def _stream_decision_response(
             raw_response=None,
         ),
         streamed_answer,
+        split_tool_call_message,
     )
 
 
@@ -879,14 +908,12 @@ def _needs_decision_repair(node: str, content: str, tool_calls: list[dict[str, A
     sections = _sections(text, allow_unclosed=True)
     if _has_action_block(sections, "answer"):
         return False
-    if _contains_textual_retrieve(text):
-        return False
 
     entries = workflow_section_entries(text, allow_unclosed=True)
     if not entries:
         return not _is_plain_text_answer(text)
 
-    return all(name == node for name, _block in entries)
+    return True
 
 
 def _is_plain_text_answer(text: str) -> bool:
@@ -910,8 +937,11 @@ def _decision_repair_messages(messages: list[dict[str, Any]], node: str) -> list
             "role": "user",
             "content": (
                 "__echo_workflow_repair__\n"
-                f"Your previous {label} decision had no executable next step. Continue the workflow now. "
-                "Output exactly one of these: one or more tool calls, or an <echo_answer>...</echo_answer> block. "
+                f"Your previous {label} decision had no executable next step. "
+                f"Error: {_missing_action_decision_message(node, None)} "
+                "Continue the workflow now. Output exactly one of these: provider-native tool calls, or an "
+                "<echo_answer>...</echo_answer> block. If choosing retrieval, emit tool calls only with no "
+                f"assistant text and do not repeat or regenerate <echo_{label}> content. "
                 "Do not write prose-only intent such as 'I should search' or 'I should fetch'."
             ),
         },
@@ -963,6 +993,8 @@ def _plain_answer_repair_messages(messages: list[dict[str, Any]]) -> list[dict[s
             continue
         if role not in {"system", "developer", "user", "assistant"}:
             role = "user"
+        if role == "assistant" and _message_content(content) is None:
+            continue
         repaired.append({"role": role, "content": content})
     return repaired
 
@@ -1006,16 +1038,17 @@ def _empty_decision_message(node: str) -> str:
     return f"{node.title()} node returned an empty response."
 
 
+def _missing_action_decision_message(node: str, content: str | None) -> str:
+    detail = f"{node.title()} node must include <echo_answer> or at least one provider-native tool call."
+    return _with_llm_raw_output(detail, content) if content is not None else detail
+
+
 def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dict[str, Any]]) -> str:
-    """Ensure native tool-call decisions still have a visible node record."""
+    """Preserve real visible decision text while allowing tool-call-only turns."""
     if not tool_calls:
         return content
 
     sections = _sections(content, allow_unclosed=True)
-    names = [str(item.get("name") or "").strip() for item in tool_calls if isinstance(item, dict) and item.get("name")]
-    if not names:
-        return content
-
     node_block = _optional_text(sections.get(node))
     if node_block:
         return render_workflow_section(node, node_block)
@@ -1024,21 +1057,7 @@ def _with_native_tool_call_content(node: str, content: str, tool_calls: list[dic
     if fallback_text:
         return render_workflow_section(node, fallback_text)
 
-    if node == WorkflowStep.THINK.value:
-        return render_workflow_section(
-            node,
-            json.dumps(
-                {
-                    "reasoning": f"Need another retrieval step with: {', '.join(names)}.",
-                    "valid_information": [],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
-
-    label = "Native tool call" if len(names) == 1 else "Native tool calls"
-    return render_workflow_section(node, f"{label}: {', '.join(names)}")
+    return ""
 
 
 def _repair_decision_content(
@@ -1047,21 +1066,47 @@ def _repair_decision_content(
     repair_content: str,
     selected_tool_calls: list[dict[str, Any]],
 ) -> str:
-    """Keep the streamed decision text when repair only supplies native tool calls."""
-    if not selected_tool_calls or not pre_repair_content:
+    """Concat the original decision with the repair action."""
+    if not pre_repair_content:
+        return repair_content
+    if selected_tool_calls:
+        return _decision_content_for_repair_concat(node, pre_repair_content)
+
+    action_content = _repair_action_content(repair_content)
+    if not action_content:
         return repair_content
 
-    repair_sections = _sections(repair_content, allow_unclosed=True)
-    if _has_action_block(repair_sections, "answer") or _optional_text(repair_sections.get(node)):
-        return repair_content
+    decision_content = _decision_content_for_repair_concat(node, pre_repair_content)
+    if decision_content:
+        return f"{decision_content}\n\n{action_content}"
+    return action_content
 
-    pre_repair_sections = _sections(pre_repair_content, allow_unclosed=True)
-    return pre_repair_content if _optional_text(pre_repair_sections.get(node)) else repair_content
+
+def _decision_content_for_repair_concat(node: str, content: str) -> str:
+    entries = [
+        (name, block)
+        for name, block in workflow_section_entries(content, allow_unclosed=True)
+        if name in {"plan", "think"} and block
+    ]
+    if entries:
+        return render_workflow_sections(entries)
+    text = _tool_call_decision_text(content, _sections(content, allow_unclosed=True))
+    return render_workflow_section(node, text) if text else ""
+
+
+def _repair_action_content(content: str) -> str:
+    sections = _sections(content, allow_unclosed=True)
+    answer = str(sections.get("answer") or "").strip()
+    if answer:
+        return render_workflow_section("answer", answer)
+    if _is_plain_text_answer(content):
+        return render_workflow_section("answer", content)
+    return ""
 
 
 def _tool_call_decision_text(content: str, sections: dict[str, str]) -> str | None:
     """Preserve non-action decision text before falling back to a synthetic tool-call note."""
-    if not content.strip() or _has_action_block(sections, "answer"):
+    if not content.strip() or _has_action_block(sections, "answer") or _contains_textual_retrieve(content):
         return None
     text = re.sub(r"</?\s*(?:echo_)?(?:plan|think|answer|tool)\s*>", "", content, flags=re.IGNORECASE).strip()
     return _optional_text(text)
@@ -1129,6 +1174,11 @@ def _decision_record_id(state: WorkflowState, node: str) -> str:
     return _record_id(state, node)
 
 
+def _tool_call_record_id(state: WorkflowState, node: str) -> str:
+    """Build a stable assistant-tool-call record id for one decision pass."""
+    return f"{_decision_record_id(state, node)}:tool-calls"
+
+
 def _tool_record_suffix(*, round_number: int, call_index: int, call_count: int) -> str:
     """Build stable tool record suffixes while preserving old single-call ids."""
     if call_count <= 1:
@@ -1185,13 +1235,30 @@ def _pending_retrieve_with_native_tool_calls(
     return resolved or None
 
 
-def _assistant_memory_item(content: str, pending_retrieve: Any) -> dict[str, Any]:
+def _assistant_memory_items(
+    content: str,
+    pending_retrieve: Any,
+    *,
+    split_tool_call_message: bool = False,
+) -> list[dict[str, Any]]:
     """Build one assistant transcript item with native tool_calls when retrieval is pending."""
-    payload: dict[str, Any] = {"role": "assistant", "content": content}
     provider_tool_calls = _provider_tool_calls(_pending_retrieve_calls(pending_retrieve))
+    if split_tool_call_message and provider_tool_calls:
+        items: list[dict[str, Any]] = []
+        if content.strip():
+            items.append({"role": "assistant", "content": content})
+        items.append({"role": "assistant", "content": "", "tool_calls": provider_tool_calls})
+        return items
+
+    payload: dict[str, Any] = {"role": "assistant", "content": content}
     if provider_tool_calls:
         payload["tool_calls"] = provider_tool_calls
-    return payload
+    return [payload]
+
+
+def _assistant_memory_item(content: str, pending_retrieve: Any) -> dict[str, Any]:
+    """Build one assistant transcript item for older focused tests."""
+    return _assistant_memory_items(content, pending_retrieve)[0]
 
 
 def _provider_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]] | None:

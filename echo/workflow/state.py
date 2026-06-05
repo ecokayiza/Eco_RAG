@@ -85,12 +85,15 @@ def _normalize_memory(messages: list[dict[str, Any]] | None) -> list[WorkflowMem
     for item in messages or []:
         role = str(item.get("role", "")).strip()
         content = _normalize_content(item.get("content"))
-        if role not in {"system", "user", "assistant", "tool"} or not content:
-            continue
         payload: WorkflowMemoryMessage = {"role": role, "content": content}
         tool_calls = item.get("tool_calls")
-        if isinstance(tool_calls, list) and tool_calls:
-            payload["tool_calls"] = [dict(entry) for entry in tool_calls if isinstance(entry, dict)]
+        provider_tool_calls = [dict(entry) for entry in tool_calls if isinstance(entry, dict)] if isinstance(tool_calls, list) else []
+        has_tool_calls = role == "assistant" and bool(provider_tool_calls)
+        if role not in {"system", "user", "assistant", "tool"} or (content is None and not has_tool_calls):
+            continue
+        payload = {"role": role, "content": content if content is not None else ""}
+        if has_tool_calls:
+            payload["tool_calls"] = provider_tool_calls
         tool_call_id = str(item.get("tool_call_id", "")).strip()
         if role == "tool" and tool_call_id:
             payload["tool_call_id"] = tool_call_id

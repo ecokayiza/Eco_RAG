@@ -18,6 +18,7 @@ export interface SessionSummary {
 }
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
+export type MessageToolCall = Record<string, unknown>;
 
 export interface MessageAttachment {
   id?: string;
@@ -38,6 +39,8 @@ export interface MessageRecord {
   message_type?: string | null;
   workflow_turn_id?: string | null;
   tool_name?: string | null;
+  tool_call_id?: string | null;
+  tool_calls?: MessageToolCall[] | null;
   token_usage?: TokenUsage | null;
   attachments?: MessageAttachment[] | null;
   pending?: boolean;

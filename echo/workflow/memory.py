@@ -43,7 +43,7 @@ def _has_think_or_answer_content(content: str | None) -> bool:
 
 def _previous_tool_memory_slice(messages: list[dict[str, Any]]) -> tuple[int, int] | None:
     end_index = len(messages)
-    if end_index > 0 and _role(messages[-1]) == "assistant":
+    if end_index > 0 and _role(messages[-1]) == "assistant" and not _is_tool_call_carrier(messages[-1]):
         end_index -= 1
 
     index = end_index - 1
@@ -55,6 +55,9 @@ def _previous_tool_memory_slice(messages: list[dict[str, Any]]) -> tuple[int, in
             index -= 1
             continue
         if _is_visual_memory_item(item):
+            index -= 1
+            continue
+        if _is_tool_call_carrier(item):
             index -= 1
             continue
         break
@@ -86,6 +89,16 @@ def _is_visual_memory_item(item: dict[str, Any]) -> bool:
     return (
         any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
         and all(isinstance(part, dict) and part.get("type") in allowed_types for part in content)
+    )
+
+
+def _is_tool_call_carrier(item: dict[str, Any]) -> bool:
+    tool_calls = item.get("tool_calls")
+    return (
+        _role(item) == "assistant"
+        and not _optional_text(item.get("content"))
+        and isinstance(tool_calls, list)
+        and bool(tool_calls)
     )
 
 

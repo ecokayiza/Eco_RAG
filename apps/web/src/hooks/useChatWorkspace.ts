@@ -235,7 +235,8 @@ function normalizeLiveWorkflowRecord(
   const record = payload as Record<string, unknown>;
   const role = typeof record.role === "string" ? record.role : null;
   const content = typeof record.content === "string" ? record.content : "";
-  if (!role || !content.trim()) {
+  const toolCalls = normalizeToolCalls(record.tool_calls);
+  if (!role || (!content.trim() && !toolCalls)) {
     return null;
   }
 
@@ -254,12 +255,22 @@ function normalizeLiveWorkflowRecord(
     message_type: typeof record.message_type === "string" ? record.message_type : null,
     workflow_turn_id: workflowTurnId,
     tool_name: typeof record.tool_name === "string" ? record.tool_name : null,
+    tool_call_id: typeof record.tool_call_id === "string" ? record.tool_call_id : null,
+    tool_calls: toolCalls,
     token_usage:
       record.token_usage && typeof record.token_usage === "object"
         ? (record.token_usage as MessageRecord["token_usage"])
         : null,
     attachments: normalizeAttachments(record.attachments),
   };
+}
+
+function normalizeToolCalls(value: unknown): MessageRecord["tool_calls"] {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const toolCalls = value.flatMap((item) => (item && typeof item === "object" ? [{ ...(item as Record<string, unknown>) }] : []));
+  return toolCalls.length > 0 ? toolCalls : null;
 }
 
 function normalizeAttachments(value: unknown): MessageRecord["attachments"] {
